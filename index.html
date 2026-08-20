@@ -1,33 +1,24 @@
 <!doctype html>
 <html lang="id">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Revo Learning Flip</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"><link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="site-header"><a class="brand" href="#"><span class="brand-icon">▮▮</span>Revo Learning Flip</a></header>
   <main>
-    <section class="welcome" id="upload">
-      <div class="upload-panel" id="dropZone">
-        <h1>Welcome Revo<br>Learning Flip</h1>
-        <button class="primary" id="heroUpload"><span>↥</span> Upload File PDF</button>
-        <input id="fileInput" type="file" accept="application/pdf,.pdf" hidden>
-        <p class="limit">Maksimal ukuran file: 1GB</p>
+    <section class="welcome" id="upload"><div class="upload-panel" id="dropZone"><h1>Welcome Revo<br>Learning Flip</h1><button class="primary" id="heroUpload"><span>↥</span> Upload File PDF</button><input id="fileInput" type="file" accept="application/pdf,.pdf" hidden><p class="limit">Maksimal ukuran file: 1GB</p><p class="message" id="message" role="alert"></p></div></section>
+    <section class="flipbook hidden" id="flipbook" aria-label="Pembaca dokumen">
+      <div class="book-stage">
+        <button class="nav-button left" id="previous" aria-label="Halaman sebelumnya">‹</button>
+        <div class="book"><div class="book-page"><canvas id="leftCanvas"></canvas></div><div class="book-page" id="rightPage"><canvas id="rightCanvas"></canvas></div></div>
+        <button class="nav-button right" id="next" aria-label="Halaman berikutnya">›</button>
       </div>
-    </section>
-    <section class="reader hidden" id="reader">
-      <div class="reader-top"><span id="documentName">Dokumen</span><span id="pageCount">— / —</span></div>
-      <div class="book-shell" id="bookShell"><button class="turn prev" aria-label="Halaman sebelumnya">‹</button><div class="page-paper"><canvas id="pdfCanvas"></canvas><div class="loading hidden" id="loading">Memuat halaman…</div></div><button class="turn next" aria-label="Halaman berikutnya">›</button></div>
-      <div class="controls" id="controls"><button id="previous">← Sebelumnya</button><span>Halaman <input id="pageInput" value="1" inputmode="numeric"> dari <b id="totalPages">1</b></span><button id="next">Berikutnya →</button><button class="icon" id="fullscreen" title="Layar penuh">⛶</button></div>
-      <p class="message" id="message" role="alert"></p>
+      <div class="book-actions"><span class="page-pill" id="pageCount">1 / 1</span><button class="share-button" id="share">⌯ <span>Bagikan</span></button><button class="delete-button" id="delete">♜ <span>Hapus</span></button></div>
     </section>
   </main>
   <footer><span class="footer-icon">▮▮</span><span>© 2026 Revo Learning Flip. All rights reserved.</span></footer>
   <script type="module" src="app.js"></script>
-</body>
-</html>
+</body></html>
