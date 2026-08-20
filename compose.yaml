@@ -1,0 +1,11 @@
+services:
+  revo-flipbook:
+    build: .
+    container_name: revo-flipbook
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+    volumes:
+      - /volume1/docker/revo-flipbook/uploads:/app/uploads
