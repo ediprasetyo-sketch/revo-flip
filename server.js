@@ -50,6 +50,22 @@ function parsePartBody(body) {
   if (!data.length) throw new Error('Data chunk kosong');
   return data;
 }
+function parseRange(header, size) {
+  if (!header || !header.startsWith('bytes=')) return null;
+  const [startRaw, endRaw] = header.slice(6).split('-');
+  let start = startRaw === '' ? NaN : Number(startRaw);
+  let end = endRaw === '' ? NaN : Number(endRaw);
+  if (!Number.isInteger(start) && !Number.isInteger(end)) return 'invalid';
+  if (!Number.isInteger(start)) {
+    const suffix = Math.min(end, size);
+    start = Math.max(0, size - suffix);
+    end = size - 1;
+  } else {
+    if (!Number.isInteger(end) || end >= size) end = size - 1;
+  }
+  if (start < 0 || start >= size || end < start) return 'invalid';
+  return { start, end };
+}
 
 await app.register(async function apiRoutes(api) {
   api.get('/api/version', async () => ({ ok: true, version: APP_VERSION, pid: process.pid }));
@@ -69,19 +85,11 @@ await app.register(async function apiRoutes(api) {
     const expires = (await q(`INSERT INTO share_links(token,book_id,expires_at)
       VALUES($1,$2,NOW() + ($3 || ' hours')::interval)
       RETURNING expires_at`, [token, req.params.id, SHARE_TTL_HOURS]))[0];
-    return {
-      ok: true,
-      token,
-      expiresAt: expires.expires_at,
-      expiresInHours: SHARE_TTL_HOURS,
-      viewer: `/viewer.html?share=${encodeURIComponent(token)}`
-    };
+    return { ok: true, token, expiresAt: expires.expires_at, expiresInHours: SHARE_TTL_HOURS, viewer: `/viewer.html?share=${encodeURIComponent(token)}` };
   });
 
   api.get('/api/share/:token', async (req, reply) => {
-    const rows = await q(`SELECT s.book_id,s.expires_at,b.title
-      FROM share_links s JOIN books b ON b.id=s.book_id
-      WHERE s.token=$1 AND s.expires_at > NOW() AND b.status=$2`, [req.params.token, 'ready']);
+    const rows = await q(`SELECT s.book_id,s.expires_at,b.title FROM share_links s JOIN books b ON b.id=s.book_id WHERE s.token=$1 AND s.expires_at > NOW() AND b.status=$2`, [req.params.token, 'ready']);
     if (!rows[0]) return reply.code(410).send({ error: 'Link sudah kedaluwarsa atau tidak valid' });
     await q('UPDATE share_links SET last_used_at=NOW() WHERE token=$1', [req.params.token]);
     return { ok: true, id: rows[0].book_id, title: rows[0].title, expiresAt: rows[0].expires_at };
@@ -108,8 +116,7 @@ await app.register(async function apiRoutes(api) {
     const upload = rows[0];
     if (!upload) return reply.code(404).send({ error: 'Upload tidak ditemukan' });
     let body;
-    try { body = parsePartBody(req.body); }
-    catch (err) { return reply.code(400).send({ error: err.message }); }
+    try { body = parsePartBody(req.body); } catch (err) { return reply.code(400).send({ error: err.message }); }
     if (body.length > Number(upload.chunk_size)) return reply.code(413).send({ error: 'Chunk terlalu besar' });
     const out = path.join(upload.temp_path, `part-${String(n).padStart(8, '0')}`);
     await fs.writeFile(out, body);
@@ -131,14 +138,13 @@ await app.register(async function apiRoutes(api) {
     const upload = rows[0];
     if (!upload) return reply.code(404).send({ error: 'Upload tidak ditemukan' });
     const parts = await q('SELECT part_number,part_size FROM upload_parts WHERE upload_id=$1 ORDER BY part_number', [uploadId]);
-    const total = parts.reduce((s, x) => s + Number(x.part_size), 0);
+    const total = parts.reduce((sum, item) => sum + Number(item.part_size), 0);
     if (total !== Number(upload.total_size)) return reply.code(409).send({ error: 'Upload belum lengkap', uploaded: total, total: Number(upload.total_size) });
     const bookId = crypto.randomUUID();
     const filename = `${bookId}-${safeName(upload.original_filename)}`;
     const finalPath = p('books', filename);
     const handle = await fs.open(finalPath, 'w');
-    try { for (const part of parts) await handle.write(await fs.readFile(path.join(upload.temp_path, `part-${String(part.part_number).padStart(8, '0')}`))); }
-    finally { await handle.close(); }
+    try { for (const part of parts) await handle.write(await fs.readFile(path.join(upload.temp_path, `part-${String(part.part_number).padStart(8, '0')}`))); } finally { await handle.close(); }
     await q('INSERT INTO books(id,title,original_filename,storage_path,file_size,mime_type,status) VALUES($1,$2,$3,$4,$5,$6,$7)', [bookId, title || upload.original_filename.replace(/\.pdf$/i, ''), upload.original_filename, finalPath, upload.total_size, 'application/pdf', 'ready']);
     await q('UPDATE uploads SET status=$2,completed_at=NOW() WHERE id=$1', [uploadId, 'completed']);
     await fs.rm(upload.temp_path, { recursive: true, force: true });
@@ -160,7 +166,19 @@ await app.register(async function apiRoutes(api) {
     }
     const rows = await q('SELECT storage_path,mime_type FROM books WHERE id=$1 AND status=$2', [req.params.id, 'ready']);
     if (!rows[0]) return reply.code(404).send({ error: 'Not found' });
-    reply.header('content-type', rows[0].mime_type).header('accept-ranges', 'bytes');
+
+    let info;
+    try { info = await fs.stat(rows[0].storage_path); } catch { return reply.code(404).send({ error: 'File PDF tidak ditemukan di storage' }); }
+    const size = info.size;
+    const range = parseRange(req.headers.range, size);
+    reply.header('content-type', rows[0].mime_type || 'application/pdf').header('accept-ranges', 'bytes').header('cache-control', 'no-store');
+    if (range === 'invalid') return reply.code(416).header('content-range', `bytes */${size}`).send();
+    if (range) {
+      const length = range.end - range.start + 1;
+      reply.code(206).header('content-range', `bytes ${range.start}-${range.end}/${size}`).header('content-length', length);
+      return reply.send(createReadStream(rows[0].storage_path, { start: range.start, end: range.end }));
+    }
+    reply.header('content-length', size);
     return reply.send(createReadStream(rows[0].storage_path));
   });
 });
