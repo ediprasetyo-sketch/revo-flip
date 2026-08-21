@@ -30,9 +30,14 @@ NEW="$(curl -fsSL "$API_URL" | sed -n 's/^[[:space:]]*"sha": "\([0-9a-f]*\)".*/\
 OLD="$(cat "$VERSION_FILE" 2>/dev/null || true)"
 log "Installed=${OLD:-none} Latest=$NEW"
 
+# A matching version file is not enough. Verify the running application too.
 if [ "$OLD" = "$NEW" ]; then
-  log "Already up to date"
-  exit 0
+  ACTUAL="$(curl -fsS http://127.0.0.1:3000/api/version 2>/dev/null | sed -n 's/.*"version":"\([^"]*\)".*/\1/p' || true)"
+  if [ "$ACTUAL" = "$NEW" ]; then
+    log "Already up to date and runtime verified: $ACTUAL"
+    exit 0
+  fi
+  log "Runtime mismatch or endpoint missing. Forcing repair rebuild. expected=$NEW actual=${ACTUAL:-none}"
 fi
 
 log "[1/6] Downloading source for exact commit $NEW"
@@ -40,6 +45,7 @@ curl -fsSL "https://codeload.github.com/$OWNER/$REPO/tar.gz/$NEW" -o "$ARCHIVE"
 mkdir -p "$WORK_DIR/source"
 tar -xzf "$ARCHIVE" -C "$WORK_DIR/source" --strip-components=1
 [ -f "$WORK_DIR/source/server.js" ] || { log "ERROR: downloaded source invalid"; exit 1; }
+grep -q "/api/version" "$WORK_DIR/source/server.js" || { log "ERROR: downloaded source lacks version endpoint"; exit 1; }
 
 log "[2/6] Backing up current application source"
 BACKUP="$BACKUP_DIR/source-$STAMP.tar.gz"
@@ -61,8 +67,8 @@ done
 printf '%s\n' "$NEW" > "$VERSION_FILE"
 
 log "[4/6] Verifying staged source"
-grep -q "/api/version" "$PROJECT_DIR/server.js" || { log "ERROR: version endpoint missing; rollback required"; exit 1; }
-grep -q "no-store" "$PROJECT_DIR/server.js" || { log "ERROR: cache policy missing; rollback required"; exit 1; }
+grep -q "/api/version" "$PROJECT_DIR/server.js" || { log "ERROR: staged version endpoint missing"; exit 1; }
+grep -q "no-store" "$PROJECT_DIR/server.js" || { log "ERROR: staged cache policy missing"; exit 1; }
 
 log "[5/6] Building app without cache"
 docker compose build --no-cache app
