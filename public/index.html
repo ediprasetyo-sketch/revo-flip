@@ -13,10 +13,19 @@
   <main class="simple-home-main">
     <section class="upload-hero">
       <h1>Welcome Revo<br>Learning Flip</h1>
-      <a class="upload-main-button" href="/upload.html">⇧ <span>Upload File PDF</span></a>
-      <p>Maksimal ukuran file: 10 GB</p>
+      <button id="pickPdf" class="upload-main-button" type="button">⇧ <span>Upload File PDF</span></button>
+      <input id="fileInput" type="file" accept="application/pdf,.pdf" hidden>
+      <p id="uploadHint">Maksimal ukuran file: 10 GB</p>
+      <div id="quickUpload" class="quick-upload" hidden>
+        <div class="quick-file"><strong id="fileName"></strong><span id="fileSize"></span></div>
+        <div class="progress"><i id="progressBar"></i></div>
+        <div class="upload-meta"><span id="progressText">Menyiapkan upload…</span><span id="speedText">—</span></div>
+        <button id="startUpload" class="button" type="button">Mulai Upload</button>
+        <div id="status" class="status"></div>
+      </div>
     </section>
   </main>
   <footer class="simple-footer">▮▮<br><span>© 2026 Revo Learning Flip. All rights reserved.</span></footer>
+  <script src="/home.js"></script>
 </body>
 </html>
