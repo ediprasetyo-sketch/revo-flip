@@ -1,4 +1,4 @@
-const MAX_FILE_SIZE = 50 * 1024 ** 2;
+const MAX_FILE_SIZE = 10 * 1024 ** 3;
 const CHUNK_SIZE = 10 * 1024 ** 2;
 const RETRIES = 3;
 const pick = document.querySelector('#pickPdf');
@@ -23,7 +23,7 @@ async function retry(fn){let last;for(let i=0;i<RETRIES;i++){try{return await fn
 function selectFile(f){
   if(!f||uploading)return;
   if(f.type&&f.type!=='application/pdf'&&!/\.pdf$/i.test(f.name)){status.textContent='Hanya file PDF yang didukung.';panel.hidden=false;return}
-  if(f.size>MAX_FILE_SIZE){status.textContent='Ukuran file melebihi batas 50 MB.';panel.hidden=false;return}
+  if(f.size>MAX_FILE_SIZE){status.textContent='Ukuran file melebihi batas 10 GB.';panel.hidden=false;return}
   file=f;
   nameEl.textContent=f.name;
   sizeEl.textContent=formatSize(f.size);
