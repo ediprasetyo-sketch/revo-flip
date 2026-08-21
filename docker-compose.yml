@@ -7,7 +7,8 @@ services:
       PORT: 3000
       DATA_DIR: /data
       MAX_FILE_SIZE: 10737418240
-      DATABASE_URL: postgres://revo:${POSTGRES_PASSWORD}@postgres:5432/revoflip
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+      DATABASE_URL: postgres://revo:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}@postgres:5432/revoflip
     volumes:
       - /volume1/RevoFlip:/data
     ports:
@@ -23,12 +24,12 @@ services:
     environment:
       POSTGRES_DB: revoflip
       POSTGRES_USER: revo
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
     volumes:
       - /volume1/docker/revo-flip/postgres:/var/lib/postgresql/data
       - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL","pg_isready -U revo -d revoflip"]
+      test: ["CMD-SHELL", "pg_isready -U revo -d revoflip"]
       interval: 5s
       timeout: 5s
       retries: 20
