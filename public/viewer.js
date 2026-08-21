@@ -8,6 +8,7 @@ const prev = document.querySelector('#prev');
 const next = document.querySelector('#next');
 const label = document.querySelector('#pageLabel');
 const share = document.querySelector('#share');
+const deleteButton = document.querySelector('#delete');
 
 let pdf;
 let bookId = directId;
@@ -82,8 +83,6 @@ async function buildBook(keepPage = 1) {
   flipbook.innerHTML = '';
   setLoading('Memuat halaman PDF…', true);
 
-  // Render semua halaman sebelum turn.js diaktifkan agar halaman berikutnya
-  // tidak lagi gagal ketika tombol Next ditekan.
   for (let number = 1; number <= pdf.numPages; number += 1) {
     const page = document.createElement('div');
     page.className = 'page';
@@ -131,9 +130,7 @@ async function rebuildKeepPage() {
   if (!pdf || !turnReady) return;
   const current = $('#flipbook').turn('page');
   turnReady = false;
-  try {
-    $('#flipbook').turn('destroy');
-  } catch (_) {}
+  try { $('#flipbook').turn('destroy'); } catch (_) {}
   await buildBook(current);
 }
 
@@ -141,17 +138,11 @@ function showError(error) {
   console.error(error);
   turnReady = false;
   const message = error?.message || 'Gagal membuka flipbook.';
-  setLoading(message === 'Link sudah kedaluwarsa atau tidak valid'
-    ? 'Link ini sudah kedaluwarsa.'
-    : message, true);
+  setLoading(message === 'Link sudah kedaluwarsa atau tidak valid' ? 'Link ini sudah kedaluwarsa.' : message, true);
 }
 
-prev.addEventListener('click', () => {
-  if (turnReady) $('#flipbook').turn('previous');
-});
-next.addEventListener('click', () => {
-  if (turnReady) $('#flipbook').turn('next');
-});
+prev.addEventListener('click', () => { if (turnReady) $('#flipbook').turn('previous'); });
+next.addEventListener('click', () => { if (turnReady) $('#flipbook').turn('next'); });
 
 share.addEventListener('click', async () => {
   const original = share.innerHTML;
@@ -168,10 +159,28 @@ share.addEventListener('click', async () => {
     setTimeout(() => { share.innerHTML = original; }, 2200);
   } catch (error) {
     if (error.name !== 'AbortError') alert(error.message || 'Gagal membagikan link.');
-  } finally {
-    share.disabled = false;
-  }
+  } finally { share.disabled = false; }
 });
+
+if (directId) {
+  deleteButton.hidden = false;
+  deleteButton.addEventListener('click', async () => {
+    if (!confirm('Hapus flipbook ini? File PDF dan link bagikan akan dihapus permanen.')) return;
+    const original = deleteButton.innerHTML;
+    deleteButton.disabled = true;
+    deleteButton.innerHTML = '… <span>Menghapus</span>';
+    try {
+      const response = await fetch(`/api/books/${encodeURIComponent(bookId)}`, { method: 'DELETE' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Gagal menghapus flipbook');
+      location.href = '/';
+    } catch (error) {
+      alert(error.message || 'Gagal menghapus flipbook.');
+      deleteButton.disabled = false;
+      deleteButton.innerHTML = original;
+    }
+  });
+}
 
 window.addEventListener('resize', () => {
   if (!pdf || !turnReady) return;
@@ -187,15 +196,11 @@ window.addEventListener('resize', () => {
       if (!response.ok) throw new Error(data.error || 'Link tidak valid');
       bookId = data.id;
       document.title = data.title ? `${data.title} — Revo Learning Flip` : document.title;
-    } else if (!bookId) {
-      throw new Error('Flipbook tidak ditemukan.');
-    }
+    } else if (!bookId) throw new Error('Flipbook tidak ditemukan.');
 
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     const media = `/api/media/${encodeURIComponent(bookId)}${shareToken ? `?share=${encodeURIComponent(shareToken)}` : ''}`;
     setLoading('Mengambil file PDF…', true);
-
-    // Ambil respons terlebih dahulu agar error API tidak disamarkan sebagai error flip.
     const response = await fetch(media, { cache: 'no-store' });
     if (!response.ok) {
       const data = await response.json().catch(() => null);
@@ -203,11 +208,8 @@ window.addEventListener('resize', () => {
     }
     const bytes = await response.arrayBuffer();
     if (!bytes.byteLength) throw new Error('File PDF kosong atau tidak dapat dibaca.');
-
     pdf = await pdfjsLib.getDocument({ data: bytes, disableRange: true, disableStream: true }).promise;
     if (!pdf.numPages) throw new Error('PDF tidak memiliki halaman.');
     await buildBook(1);
-  } catch (error) {
-    showError(error);
-  }
+  } catch (error) { showError(error); }
 })();
