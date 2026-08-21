@@ -8,14 +8,17 @@
 </head>
 <body class="simple-home">
   <header class="simple-header">
-    <a class="logo" href="/">▮▮ <span>Revo Learning Flip</span></a>
+    <a class="logo" href="/">
+      <span class="brand-mark" aria-hidden="true">▮▮</span>
+      <span>Revo Learning Flip</span>
+    </a>
   </header>
+
   <main class="simple-home-main">
     <section class="upload-hero" id="uploadHero">
       <h1>Welcome Revo<br>Learning Flip</h1>
-      <button id="pickPdf" class="upload-main-button" type="button">⇧ <span>Upload File PDF</span></button>
+      <button id="pickPdf" class="upload-main-button" type="button"><span class="upload-icon">⇧</span><span>Upload File PDF</span></button>
       <input id="fileInput" type="file" accept="application/pdf,.pdf" hidden>
-      <p id="uploadHint">Pilih PDF — upload akan dimulai otomatis</p>
       <div id="quickUpload" class="quick-upload" hidden aria-live="polite">
         <div class="quick-file"><strong id="fileName"></strong><span id="fileSize"></span></div>
         <div class="progress"><i id="progressBar"></i></div>
@@ -24,7 +27,11 @@
       </div>
     </section>
   </main>
-  <footer class="simple-footer">▮▮<br><span>© 2026 Revo Learning Flip. All rights reserved.</span></footer>
+
+  <footer class="simple-footer">
+    <span class="footer-mark" aria-hidden="true">▮▮</span>
+    <span>© 2026 Revo Learning Flip. All rights reserved.</span>
+  </footer>
   <script src="/home.js"></script>
 </body>
 </html>
