@@ -1,0 +1,1 @@
+{"name":"revo-flip","main":"src/worker.js","compatibility_date":"2026-08-21","assets":{"directory":"./public"},"vars":{"MAX_FILE_SIZE":"10737418240","CHUNK_SIZE":"52428800"}}
