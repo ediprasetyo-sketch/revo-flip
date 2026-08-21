@@ -3,27 +3,35 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f3f4f7">
   <title>Revo Learning Flip</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body class="flip-page">
   <header class="simple-header">
-    <a class="logo" href="/">▮▮ <span>Revo Learning Flip</span></a>
+    <a class="logo" href="/" aria-label="Kembali ke beranda"><b>▮▮</b><span>Revo Learning Flip</span></a>
   </header>
+
   <main class="flip-main">
-    <section id="bookStage" class="flip-stage">
+    <section id="bookStage" class="flip-stage" aria-label="PDF Flipbook">
+      <div class="book-shell">
+        <div class="book-shadow"></div>
+        <canvas id="pdfCanvas"></canvas>
+      </div>
       <div class="flip-loading">Memuat PDF…</div>
-      <canvas id="pdfCanvas"></canvas>
     </section>
+
     <section class="flip-controls" aria-label="Kontrol flipbook">
-      <button id="prev" aria-label="Halaman sebelumnya">‹</button>
-      <span id="pageLabel">1 / 1</span>
-      <button id="next" aria-label="Halaman berikutnya">›</button>
-      <i></i>
-      <button id="share" class="share-button">⌘ Bagikan</button>
+      <button id="prev" class="nav-button" aria-label="Halaman sebelumnya">‹</button>
+      <span id="pageLabel">– / –</span>
+      <button id="next" class="nav-button" aria-label="Halaman berikutnya">›</button>
+      <i aria-hidden="true"></i>
+      <button id="share" class="share-button">⌘ <span>Bagikan</span></button>
     </section>
   </main>
-  <footer class="simple-footer">▮▮<br><span>© 2026 Revo Learning Flip. All rights reserved.</span></footer>
+
+  <footer class="simple-footer"><b>▮▮</b><br><span>© 2026 Revo Learning Flip. All rights reserved.</span></footer>
+
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="/viewer.js"></script>
 </body>
