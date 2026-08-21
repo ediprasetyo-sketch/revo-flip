@@ -13,12 +13,19 @@ const PORT = Number(process.env.PORT || 3000);
 const DATA_DIR = process.env.DATA_DIR || '/data';
 const MAX_FILE_SIZE = Number(process.env.MAX_FILE_SIZE || 10 * 1024 ** 3);
 const MAX_CHUNK_SIZE = 15 * 1024 * 1024;
+const VERSION_FILE = path.join(__dirname, '.revo-flip-version');
+const APP_VERSION = (await fs.readFile(VERSION_FILE, 'utf8').catch(() => 'dev')).trim() || 'dev';
 const pool = new Pool({ connectionString: process.env.DATABASE_URL || 'postgres://revo:revo@postgres:5432/revoflip' });
 const p = (...x) => path.join(DATA_DIR, ...x);
 
 await Promise.all(['temp', 'books', 'covers', 'thumbnails'].map(x => fs.mkdir(p(x), { recursive: true })));
 await app.register(cors, { origin: true });
-await app.register(statik, { root: path.join(__dirname, 'public') });
+await app.register(statik, {
+  root: path.join(__dirname, 'public'),
+  setHeaders(res, filePath) {
+    if (/\.(html|js|css)$/i.test(filePath)) res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  }
+});
 
 async function q(sql, args = []) { return (await pool.query(sql, args)).rows; }
 function safeName(name = 'file.pdf') { return path.basename(name).replace(/[^a-zA-Z0-9._ -]/g, '_'); }
@@ -30,7 +37,8 @@ function parsePartBody(body) {
   return data;
 }
 
-app.get('/api/health', async () => ({ ok: true, storage: DATA_DIR }));
+app.get('/api/version', async () => ({ ok: true, version: APP_VERSION, pid: process.pid }));
+app.get('/api/health', async () => ({ ok: true, storage: DATA_DIR, version: APP_VERSION }));
 app.get('/api/books', async () => q('SELECT id,title,original_filename,file_size,status,visibility,created_at FROM books WHERE status=$1 ORDER BY created_at DESC', ['ready']));
 app.get('/api/books/:id', async (req, reply) => {
   const rows = await q('SELECT * FROM books WHERE id=$1', [req.params.id]);
@@ -48,7 +56,7 @@ app.post('/api/upload/init', async (req, reply) => {
   const dir = p('temp', id);
   await fs.mkdir(dir, { recursive: true });
   await q('INSERT INTO uploads(id,original_filename,total_size,chunk_size,status,temp_path) VALUES($1,$2,$3,$4,$5,$6)', [id, safeName(name), size, actualChunkSize, 'uploading', dir]);
-  return { uploadId: id, chunkSize: actualChunkSize, maxFileSize: MAX_FILE_SIZE };
+  return { uploadId: id, chunkSize: actualChunkSize, maxFileSize: MAX_FILE_SIZE, version: APP_VERSION };
 });
 
 app.put('/api/upload/part', async (req, reply) => {
@@ -66,14 +74,14 @@ app.put('/api/upload/part', async (req, reply) => {
   await fs.writeFile(out, body);
   await q('INSERT INTO upload_parts(upload_id,part_number,part_size) VALUES($1,$2,$3) ON CONFLICT(upload_id,part_number) DO UPDATE SET part_size=EXCLUDED.part_size', [uploadId, n, body.length]);
   const progress = (await q('SELECT COALESCE(SUM(part_size),0)::bigint AS uploaded FROM upload_parts WHERE upload_id=$1', [uploadId]))[0];
-  return { ok: true, uploaded: Number(progress.uploaded), total: Number(upload.total_size) };
+  return { ok: true, uploaded: Number(progress.uploaded), total: Number(upload.total_size), version: APP_VERSION };
 });
 
 app.get('/api/upload/:id/status', async (req, reply) => {
   const rows = await q('SELECT total_size,chunk_size,status FROM uploads WHERE id=$1', [req.params.id]);
   if (!rows[0]) return reply.code(404).send({ error: 'Not found' });
   const parts = await q('SELECT part_number FROM upload_parts WHERE upload_id=$1 ORDER BY part_number', [req.params.id]);
-  return { ...rows[0], parts: parts.map(x => x.part_number) };
+  return { ...rows[0], parts: parts.map(x => x.part_number), version: APP_VERSION };
 });
 
 app.post('/api/upload/complete', async (req, reply) => {
@@ -97,7 +105,7 @@ app.post('/api/upload/complete', async (req, reply) => {
   await q('INSERT INTO books(id,title,original_filename,storage_path,file_size,mime_type,status) VALUES($1,$2,$3,$4,$5,$6,$7)', [bookId, title || upload.original_filename.replace(/\.pdf$/i, ''), upload.original_filename, finalPath, upload.total_size, 'application/pdf', 'ready']);
   await q('UPDATE uploads SET status=$2,completed_at=NOW() WHERE id=$1', [uploadId, 'completed']);
   await fs.rm(upload.temp_path, { recursive: true, force: true });
-  return { ok: true, id: bookId, viewer: `/viewer.html?id=${bookId}` };
+  return { ok: true, id: bookId, viewer: `/viewer.html?id=${bookId}`, version: APP_VERSION };
 });
 
 app.post('/api/upload/:id/abort', async (req) => {
@@ -114,7 +122,7 @@ app.get('/api/media/:id', async (req, reply) => {
 });
 
 app.setErrorHandler((err, req, reply) => {
-  req.log.error({ err, contentType: req.headers['content-type'] }, 'request failed');
-  reply.code(err.statusCode || 500).send({ error: err.message || 'Server error' });
+  req.log.error({ err, contentType: req.headers['content-type'], version: APP_VERSION }, 'request failed');
+  reply.code(err.statusCode || 500).send({ error: err.message || 'Server error', version: APP_VERSION });
 });
 app.listen({ port: PORT, host: '0.0.0.0' });
