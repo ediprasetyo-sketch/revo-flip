@@ -1,108 +1,14 @@
-const params = new URLSearchParams(location.search);
-const id = params.get('id');
-const canvas = document.querySelector('#pdfCanvas');
-const ctx = canvas.getContext('2d');
-const stage = document.querySelector('#bookStage');
-const shell = document.querySelector('.book-shell');
-const label = document.querySelector('#pageLabel');
-const loading = document.querySelector('.flip-loading');
-const prev = document.querySelector('#prev');
-const next = document.querySelector('#next');
-
-let pdf = null;
-let page = 1;
-let rendering = false;
-let resizeTimer = null;
-
-function updateControls() {
-  label.textContent = pdf ? `${page} / ${pdf.numPages}` : '– / –';
-  prev.disabled = !pdf || page <= 1 || rendering;
-  next.disabled = !pdf || page >= pdf.numPages || rendering;
-}
-
-function animateFlip(direction) {
-  shell.classList.remove('turn-next', 'turn-prev');
-  void shell.offsetWidth;
-  shell.classList.add(direction === 'next' ? 'turn-next' : 'turn-prev');
-  shell.addEventListener('animationend', () => shell.classList.remove('turn-next', 'turn-prev'), { once: true });
-}
-
-async function renderPage(target, direction = '') {
-  if (!pdf || rendering) return;
-  target = Math.max(1, Math.min(pdf.numPages, target));
-  if (target === page && direction) return;
-
-  rendering = true;
-  updateControls();
-
-  try {
-    const pdfPage = await pdf.getPage(target);
-    const base = pdfPage.getViewport({ scale: 1 });
-    const availableWidth = Math.max(280, stage.clientWidth - 110);
-    const availableHeight = Math.max(260, stage.clientHeight - 90);
-    const scale = Math.min(availableWidth / base.width, availableHeight / base.height);
-    const viewport = pdfPage.getViewport({ scale: Math.max(0.25, scale) });
-    const ratio = Math.min(window.devicePixelRatio || 1, 2);
-
-    canvas.width = Math.ceil(viewport.width * ratio);
-    canvas.height = Math.ceil(viewport.height * ratio);
-    canvas.style.width = `${Math.floor(viewport.width)}px`;
-    canvas.style.height = `${Math.floor(viewport.height)}px`;
-    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-    ctx.clearRect(0, 0, viewport.width, viewport.height);
-
-    await pdfPage.render({ canvasContext: ctx, viewport }).promise;
-    page = target;
-    loading.hidden = true;
-    if (direction) animateFlip(direction);
-  } catch (err) {
-    console.error(err);
-    loading.hidden = false;
-    loading.textContent = 'Gagal menampilkan halaman PDF.';
-  } finally {
-    rendering = false;
-    updateControls();
-  }
-}
-
-prev.addEventListener('click', () => renderPage(page - 1, 'prev'));
-next.addEventListener('click', () => renderPage(page + 1, 'next'));
-
-document.querySelector('#share').addEventListener('click', async () => {
-  const url = location.href;
-  try {
-    if (navigator.share) {
-      await navigator.share({ title: document.title, url });
-    } else {
-      await navigator.clipboard.writeText(url);
-      const button = document.querySelector('#share');
-      const original = button.innerHTML;
-      button.innerHTML = '✓ <span>Link disalin</span>';
-      setTimeout(() => { button.innerHTML = original; }, 1800);
-    }
-  } catch (err) {
-    if (err.name !== 'AbortError') alert('Gagal membagikan link.');
-  }
-});
-
-window.addEventListener('resize', () => {
-  if (!pdf || rendering) return;
-  clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => renderPage(page), 160);
-});
-
-(async () => {
-  if (!id) {
-    loading.textContent = 'Flipbook tidak ditemukan.';
-    return;
-  }
-
-  try {
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-    pdf = await pdfjsLib.getDocument(`/api/media/${encodeURIComponent(id)}`).promise;
-    await renderPage(1);
-  } catch (err) {
-    console.error(err);
-    loading.textContent = 'Gagal membuka PDF.';
-  }
-})();
+const params=new URLSearchParams(location.search),id=params.get('id');
+const stage=document.querySelector('#bookStage'),book=document.querySelector('#book'),loading=document.querySelector('.flip-loading');
+const current=document.querySelector('#currentCanvas'),front=document.querySelector('#frontCanvas'),back=document.querySelector('#backCanvas');
+const prev=document.querySelector('#prev'),next=document.querySelector('#next'),label=document.querySelector('#pageLabel');
+let pdf,page=1,busy=false,resizeTimer;
+function controls(){label.textContent=pdf?`${page} / ${pdf.numPages}`:'– / –';prev.disabled=!pdf||page<=1||busy;next.disabled=!pdf||page>=pdf.numPages||busy}
+async function draw(n,canvas){const p=await pdf.getPage(n),base=p.getViewport({scale:1});const w=Math.max(280,stage.clientWidth-80),h=Math.max(260,stage.clientHeight-70);const s=Math.max(.25,Math.min(w/base.width,h/base.height));const v=p.getViewport({scale:s}),r=Math.min(devicePixelRatio||1,2);canvas.width=Math.ceil(v.width*r);canvas.height=Math.ceil(v.height*r);canvas.style.width=`${Math.floor(v.width)}px`;canvas.style.height=`${Math.floor(v.height)}px`;const c=canvas.getContext('2d');c.setTransform(r,0,0,r,0,0);c.clearRect(0,0,v.width,v.height);await p.render({canvasContext:c,viewport:v}).promise;return {w:Math.floor(v.width),h:Math.floor(v.height)}}
+function sizeBook(x){book.style.width=`${x.w*2}px`;book.style.height=`${x.h}px`;document.querySelector('.page-stack-left').style.width=`${x.w}px`;document.querySelector('.page-stack-right').style.width=`${x.w}px`}
+async function show(n){const s=await draw(n,current);sizeBook(s);page=n;controls();loading.hidden=true}
+async function flip(dir){if(!pdf||busy)return;const target=page+(dir==='next'?1:-1);if(target<1||target>pdf.numPages)return;busy=true;controls();try{const from=page;const info=await draw(target,front);await draw(from,back);sizeBook(info);book.classList.remove('flip-next','flip-prev','is-turning');void book.offsetWidth;book.classList.add('is-turning',dir==='next'?'flip-next':'flip-prev');await new Promise(resolve=>{const done=()=>{book.removeEventListener('animationend',done);resolve()};book.addEventListener('animationend',done)});await show(target)}catch(e){console.error(e);loading.hidden=false;loading.textContent='Gagal membalik halaman PDF.'}finally{book.classList.remove('is-turning','flip-next','flip-prev');busy=false;controls()}}
+prev.addEventListener('click',()=>flip('prev'));next.addEventListener('click',()=>flip('next'));
+document.querySelector('#share').addEventListener('click',async()=>{try{if(navigator.share)await navigator.share({title:document.title,url:location.href});else{await navigator.clipboard.writeText(location.href);const b=document.querySelector('#share'),t=b.innerHTML;b.innerHTML='✓ <span>Link disalin</span>';setTimeout(()=>b.innerHTML=t,1600)}}catch(e){if(e.name!=='AbortError')alert('Gagal membagikan link.')}});
+window.addEventListener('resize',()=>{if(!pdf||busy)return;clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>show(page),180)});
+(async()=>{if(!id){loading.textContent='Flipbook tidak ditemukan.';return}try{pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';pdf=await pdfjsLib.getDocument(`/api/media/${encodeURIComponent(id)}`).promise;await show(1)}catch(e){console.error(e);loading.textContent='Gagal membuka PDF.'}})();
