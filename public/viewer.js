@@ -1,15 +1,213 @@
-const params=new URLSearchParams(location.search),directId=params.get('id'),shareToken=params.get('share');
-const stage=document.querySelector('#bookStage'),flipbook=document.querySelector('#flipbook'),loading=document.querySelector('.flip-loading');
-const prev=document.querySelector('#prev'),next=document.querySelector('#next'),label=document.querySelector('#pageLabel'),share=document.querySelector('#share');
-let pdf,bookId=directId,resizeTimer,turnReady=false,pageW=0,pageH=0;
-function controls(){if(!turnReady)return;const current=$('#flipbook').turn('page'),total=pdf.numPages;label.textContent=`${current} / ${total}`;prev.disabled=current<=1;next.disabled=current>=total}
-function fitSize(){if(!pdf)return null;const base=pdf.getPage?null:null;const w=stage.clientWidth,h=stage.clientHeight;const pad=56;const maxW=Math.max(220,w-pad),maxH=Math.max(220,h-pad);const ratio=pageW/pageH;let sideW=Math.min(maxW/2,maxH*ratio);let sideH=sideW/ratio;if(sideW<180){sideW=Math.min(maxW,maxH*ratio);sideH=sideW/ratio}return{w:Math.floor(sideW),h:Math.floor(sideH)}}
-async function renderPage(n,w,h){const p=await pdf.getPage(n),base=p.getViewport({scale:1}),scale=Math.min(w/base.width,h/base.height),v=p.getViewport({scale}),r=Math.min(devicePixelRatio||1,2);const canvas=document.createElement('canvas');canvas.width=Math.ceil(v.width*r);canvas.height=Math.ceil(v.height*r);canvas.style.width=`${w}px`;canvas.style.height=`${h}px`;const c=canvas.getContext('2d');c.setTransform(r,0,0,r,0,0);c.fillStyle='#fff';c.fillRect(0,0,w,h);const ox=(w-v.width)/2,oy=(h-v.height)/2;c.translate(ox,oy);await p.render({canvasContext:c,viewport:v}).promise;return canvas}
-async function buildBook(){const first=await pdf.getPage(1);const base=first.getViewport({scale:1});pageW=base.width/pageH*pageH||base.width;pageH=base.height;pageW=base.width;const size=fitSize();flipbook.innerHTML='';for(let n=1;n<=pdf.numPages;n++){const page=document.createElement('div');page.className='page';page.dataset.page=n;page.style.width=`${size.w}px`;page.style.height=`${size.h}px`;flipbook.appendChild(page);const canvas=await renderPage(n,size.w,size.h);page.appendChild(canvas)}$('#flipbook').turn({width:pdf.numPages===1?size.w:size.w*2,height:size.h,autoCenter:true,display:pdf.numPages===1?'single':'double',duration:950,gradients:true,elevation:50,acceleration:true,when:{turning:(e,p)=>{if(p<1||p>pdf.numPages){e.preventDefault();return false}},turned:()=>controls()}});turnReady=true;loading.hidden=true;controls()}
-function rebuildKeepPage(){if(!pdf||!turnReady)return;const current=$('#flipbook').turn('page');turnReady=false;$('#flipbook').turn('destroy');buildBook().then(()=>$('#flipbook').turn('page',Math.min(current,pdf.numPages))).catch(showError)}
-function showError(e){console.error(e);loading.hidden=false;loading.textContent=e?.message==='Link sudah kedaluwarsa atau tidak valid'?'Link ini sudah kedaluwarsa.':'Gagal membuka flipbook.'}
-prev.addEventListener('click',()=>turnReady&&$('#flipbook').turn('previous'));
-next.addEventListener('click',()=>turnReady&&$('#flipbook').turn('next'));
-share.addEventListener('click',async()=>{const original=share.innerHTML;share.disabled=true;try{const r=await fetch(`/api/books/${encodeURIComponent(bookId)}/share`,{method:'POST'}),data=await r.json();if(!r.ok)throw new Error(data.error||'Gagal membuat link');const url=new URL(data.viewer,location.origin).href;const expiry=new Date(data.expiresAt).toLocaleString('id-ID',{dateStyle:'medium',timeStyle:'short'});if(navigator.share)await navigator.share({title:document.title,text:`Link aktif sampai ${expiry}`,url});else await navigator.clipboard.writeText(url);share.innerHTML='✓ <span>Link aktif 24 jam</span>';setTimeout(()=>share.innerHTML=original,2200)}catch(e){if(e.name!=='AbortError')alert(e.message||'Gagal membagikan link.')}finally{share.disabled=false}});
-window.addEventListener('resize',()=>{if(!pdf||!turnReady)return;clearTimeout(resizeTimer);resizeTimer=setTimeout(rebuildKeepPage,220)});
-(async()=>{try{if(shareToken){const r=await fetch(`/api/share/${encodeURIComponent(shareToken)}`),data=await r.json();if(!r.ok)throw new Error(data.error||'Link tidak valid');bookId=data.id;document.title=data.title?`${data.title} — Revo Learning Flip`:document.title}else if(!bookId)throw new Error('Flipbook tidak ditemukan.');pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';const media=`/api/media/${encodeURIComponent(bookId)}${shareToken?`?share=${encodeURIComponent(shareToken)}`:''}`;pdf=await pdfjsLib.getDocument(media).promise;await buildBook()}catch(e){showError(e)}})();
+const params = new URLSearchParams(location.search);
+const directId = params.get('id');
+const shareToken = params.get('share');
+const stage = document.querySelector('#bookStage');
+const flipbook = document.querySelector('#flipbook');
+const loading = document.querySelector('.flip-loading');
+const prev = document.querySelector('#prev');
+const next = document.querySelector('#next');
+const label = document.querySelector('#pageLabel');
+const share = document.querySelector('#share');
+
+let pdf;
+let bookId = directId;
+let resizeTimer;
+let turnReady = false;
+let pageW = 0;
+let pageH = 0;
+
+function setLoading(message, visible = true) {
+  loading.hidden = !visible;
+  if (message) loading.textContent = message;
+}
+
+function controls() {
+  if (!turnReady || !pdf) return;
+  const current = $('#flipbook').turn('page');
+  label.textContent = `${current} / ${pdf.numPages}`;
+  prev.disabled = current <= 1;
+  next.disabled = current >= pdf.numPages;
+}
+
+function fitSize() {
+  const w = Math.max(320, stage.clientWidth - 72);
+  const h = Math.max(260, stage.clientHeight - 72);
+  const ratio = pageW / pageH;
+  let singleW = Math.min(w / 2, h * ratio);
+  let singleH = singleW / ratio;
+
+  if (pdf.numPages === 1 || w < 640) {
+    singleW = Math.min(w, h * ratio);
+    singleH = singleW / ratio;
+  }
+
+  return { w: Math.max(1, Math.floor(singleW)), h: Math.max(1, Math.floor(singleH)) };
+}
+
+async function renderPage(number, width, height) {
+  const page = await pdf.getPage(number);
+  const source = page.getViewport({ scale: 1 });
+  const scale = Math.min(width / source.width, height / source.height);
+  const viewport = page.getViewport({ scale });
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d', { alpha: false });
+
+  canvas.width = Math.ceil(width * dpr);
+  canvas.height = Math.ceil(height * dpr);
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, width, height);
+
+  const offsetX = (width - viewport.width) / 2;
+  const offsetY = (height - viewport.height) / 2;
+  ctx.save();
+  ctx.translate(offsetX, offsetY);
+  await page.render({ canvasContext: ctx, viewport }).promise;
+  ctx.restore();
+  page.cleanup();
+  return canvas;
+}
+
+async function buildBook(keepPage = 1) {
+  const first = await pdf.getPage(1);
+  const firstViewport = first.getViewport({ scale: 1 });
+  pageW = firstViewport.width;
+  pageH = firstViewport.height;
+  first.cleanup();
+
+  const size = fitSize();
+  flipbook.innerHTML = '';
+  setLoading('Memuat halaman PDF…', true);
+
+  // Render semua halaman sebelum turn.js diaktifkan agar halaman berikutnya
+  // tidak lagi gagal ketika tombol Next ditekan.
+  for (let number = 1; number <= pdf.numPages; number += 1) {
+    const page = document.createElement('div');
+    page.className = 'page';
+    page.dataset.page = String(number);
+    page.style.width = `${size.w}px`;
+    page.style.height = `${size.h}px`;
+    flipbook.appendChild(page);
+
+    try {
+      const canvas = await renderPage(number, size.w, size.h);
+      page.appendChild(canvas);
+    } catch (error) {
+      console.error(`PDF page ${number} failed`, error);
+      throw new Error(`Gagal memuat halaman ${number} dari PDF.`);
+    }
+  }
+
+  $('#flipbook').turn({
+    width: pdf.numPages === 1 ? size.w : size.w * 2,
+    height: size.h,
+    autoCenter: true,
+    display: pdf.numPages === 1 || stage.clientWidth < 640 ? 'single' : 'double',
+    duration: 950,
+    gradients: true,
+    elevation: 50,
+    acceleration: true,
+    when: {
+      turning: (event, targetPage) => {
+        if (targetPage < 1 || targetPage > pdf.numPages) {
+          event.preventDefault();
+          return false;
+        }
+      },
+      turned: () => controls()
+    }
+  });
+
+  turnReady = true;
+  $('#flipbook').turn('page', Math.max(1, Math.min(keepPage, pdf.numPages)));
+  setLoading('', false);
+  controls();
+}
+
+async function rebuildKeepPage() {
+  if (!pdf || !turnReady) return;
+  const current = $('#flipbook').turn('page');
+  turnReady = false;
+  try {
+    $('#flipbook').turn('destroy');
+  } catch (_) {}
+  await buildBook(current);
+}
+
+function showError(error) {
+  console.error(error);
+  turnReady = false;
+  const message = error?.message || 'Gagal membuka flipbook.';
+  setLoading(message === 'Link sudah kedaluwarsa atau tidak valid'
+    ? 'Link ini sudah kedaluwarsa.'
+    : message, true);
+}
+
+prev.addEventListener('click', () => {
+  if (turnReady) $('#flipbook').turn('previous');
+});
+next.addEventListener('click', () => {
+  if (turnReady) $('#flipbook').turn('next');
+});
+
+share.addEventListener('click', async () => {
+  const original = share.innerHTML;
+  share.disabled = true;
+  try {
+    const response = await fetch(`/api/books/${encodeURIComponent(bookId)}/share`, { method: 'POST' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Gagal membuat link');
+    const url = new URL(data.viewer, location.origin).href;
+    const expiry = new Date(data.expiresAt).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
+    if (navigator.share) await navigator.share({ title: document.title, text: `Link aktif sampai ${expiry}`, url });
+    else await navigator.clipboard.writeText(url);
+    share.innerHTML = '✓ <span>Link aktif 24 jam</span>';
+    setTimeout(() => { share.innerHTML = original; }, 2200);
+  } catch (error) {
+    if (error.name !== 'AbortError') alert(error.message || 'Gagal membagikan link.');
+  } finally {
+    share.disabled = false;
+  }
+});
+
+window.addEventListener('resize', () => {
+  if (!pdf || !turnReady) return;
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => rebuildKeepPage().catch(showError), 250);
+});
+
+(async () => {
+  try {
+    if (shareToken) {
+      const response = await fetch(`/api/share/${encodeURIComponent(shareToken)}`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Link tidak valid');
+      bookId = data.id;
+      document.title = data.title ? `${data.title} — Revo Learning Flip` : document.title;
+    } else if (!bookId) {
+      throw new Error('Flipbook tidak ditemukan.');
+    }
+
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    const media = `/api/media/${encodeURIComponent(bookId)}${shareToken ? `?share=${encodeURIComponent(shareToken)}` : ''}`;
+    setLoading('Mengambil file PDF…', true);
+
+    // Ambil respons terlebih dahulu agar error API tidak disamarkan sebagai error flip.
+    const response = await fetch(media, { cache: 'no-store' });
+    if (!response.ok) {
+      const data = await response.json().catch(() => null);
+      throw new Error(data?.error || `Gagal mengambil PDF (${response.status}).`);
+    }
+    const bytes = await response.arrayBuffer();
+    if (!bytes.byteLength) throw new Error('File PDF kosong atau tidak dapat dibaca.');
+
+    pdf = await pdfjsLib.getDocument({ data: bytes, disableRange: true, disableStream: true }).promise;
+    if (!pdf.numPages) throw new Error('PDF tidak memiliki halaman.');
+    await buildBook(1);
+  } catch (error) {
+    showError(error);
+  }
+})();
