@@ -1,0 +1,17 @@
+/* Final home-screen alignment with approved Revo Learning Flip reference */
+html,body.simple-home{min-height:100%;background:#f3f4f7}
+.simple-home{min-height:100vh;overflow:hidden;background:linear-gradient(135deg,#f7f8fa 0%,#e9ecf2 100%)}
+.simple-header{height:62px;padding:0 28px;background:#fff;border-bottom:1px solid #e2e4e9}
+.logo{gap:12px;font-size:21px;font-weight:800;color:#344052}
+.brand-mark,.footer-mark{color:#a7b500;background:#f1f3d8;border-radius:50%;letter-spacing:2px}
+.brand-mark{width:38px;height:38px;font-size:12px}
+.simple-home-main{padding:44px 20px 28px}
+.upload-hero{transform:translateY(-8px)}
+.upload-hero h1{margin:0 0 46px;font-size:clamp(42px,5vw,66px);line-height:.95;color:#a7b500;font-weight:800}
+.upload-main-button{min-width:220px;padding:20px 28px;border-radius:16px;background:#c9df00;color:#172033;font-size:18px;font-weight:800;box-shadow:0 16px 28px #b8c90030}
+.upload-limit{margin:15px 0 0;color:#667085;font-size:15px;line-height:1.4}
+.simple-footer{min-height:74px;padding:10px 20px 16px;border-top:1px solid #e1e4e9;background:#fff;color:#667085;gap:7px}
+.footer-mark{width:34px;height:34px;font-size:10px}
+/* Remove any dark strip/unused overflow at the bottom */
+.simple-home::after{display:none!important}
+@media(max-width:760px){.simple-home{overflow:auto}.upload-hero{transform:none}.upload-limit{font-size:14px}}
