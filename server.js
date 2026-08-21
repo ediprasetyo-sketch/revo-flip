@@ -6,6 +6,7 @@ import { createReadStream, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
+import { spawn } from 'node:child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = Fastify({ logger: true, bodyLimit: 25 * 1024 * 1024 });
@@ -23,176 +24,36 @@ try { database = new URL(databaseUrl); } catch { throw new Error('DATABASE_URL i
 if (!database.password) throw new Error('DATABASE_URL password is missing');
 const pool = new Pool({ connectionString: databaseUrl });
 const p = (...x) => path.join(DATA_DIR, ...x);
-
 await Promise.all(['temp', 'books', 'covers', 'thumbnails'].map(x => fs.mkdir(p(x), { recursive: true })));
-await pool.query(`CREATE TABLE IF NOT EXISTS share_links (
-  token TEXT PRIMARY KEY,
-  book_id UUID NOT NULL REFERENCES books(id) ON DELETE CASCADE,
-  expires_at TIMESTAMPTZ NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  last_used_at TIMESTAMPTZ
-)`);
+await pool.query(`CREATE TABLE IF NOT EXISTS share_links (token TEXT PRIMARY KEY,book_id UUID NOT NULL REFERENCES books(id) ON DELETE CASCADE,expires_at TIMESTAMPTZ NOT NULL,created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),last_used_at TIMESTAMPTZ)`);
 await pool.query('CREATE INDEX IF NOT EXISTS idx_share_links_book_expiry ON share_links(book_id, expires_at)');
+await pool.query('ALTER TABLE books ADD COLUMN IF NOT EXISTS processing_error TEXT');
+await pool.query('ALTER TABLE books ADD COLUMN IF NOT EXISTS cover_path TEXT');
+await pool.query('ALTER TABLE books ADD COLUMN IF NOT EXISTS thumbnail_path TEXT');
 await app.register(cors, { origin: true });
-await app.register(statik, {
-  root: path.join(__dirname, 'public'),
-  setHeaders(res, filePath) {
-    if (/\.(html|js|css)$/i.test(filePath)) res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
-  }
+await app.register(statik, { root: path.join(__dirname, 'public'), setHeaders(res,filePath){if(/\.(html|js|css)$/i.test(filePath))res.setHeader('Cache-Control','no-store, no-cache, must-revalidate, max-age=0')} });
+async function q(sql,args=[]){return (await pool.query(sql,args)).rows}
+function safeName(name='file.pdf'){return path.basename(name).replace(/[^a-zA-Z0-9._ -]/g,'_')}
+function parsePartBody(body){if(!body||typeof body!=='object')throw new Error('Body part tidak valid');if(typeof body.data!=='string'||!body.data)throw new Error('Data chunk kosong');const data=Buffer.from(body.data,'base64');if(!data.length)throw new Error('Data chunk kosong');return data}
+function parseRange(header,size){if(!header||!header.startsWith('bytes='))return null;const [a,b]=header.slice(6).split('-');let start=a===''?NaN:Number(a),end=b===''?NaN:Number(b);if(!Number.isInteger(start)&&!Number.isInteger(end))return'invalid';if(!Number.isInteger(start)){const suffix=Math.min(end,size);start=Math.max(0,size-suffix);end=size-1}else if(!Number.isInteger(end)||end>=size)end=size-1;if(start<0||start>=size||end<start)return'invalid';return{start,end}}
+function run(cmd,args){return new Promise((resolve,reject)=>{const child=spawn(cmd,args,{stdio:['ignore','ignore','pipe']});let err='';child.stderr.on('data',x=>err+=x);child.on('error',reject);child.on('close',code=>code===0?resolve():reject(new Error(`${cmd} gagal (${code}): ${err.slice(-1000)}`)))})}
+async function processBook(bookId,sourcePath){const optimized=p('books',`${bookId}.optimized.pdf`);const cover=p('covers',`${bookId}.jpg`);const thumb=p('thumbnails',`${bookId}.jpg`);try{await q('UPDATE books SET status=$2,processing_error=NULL WHERE id=$1',[bookId,'processing']);await run('qpdf',['--check',sourcePath]);await run('qpdf',['--linearize',sourcePath,optimized]);await fs.rename(optimized,sourcePath);await run('pdftoppm',['-f','1','-singlefile','-jpeg','-jpegopt','quality=88,progressive=y','-scale-to-x','1600','-scale-to-y','-1',sourcePath,cover.replace(/\.jpg$/,'')]);await run('pdftoppm',['-f','1','-singlefile','-jpeg','-jpegopt','quality=72','-scale-to-x','480','-scale-to-y','-1',sourcePath,thumb.replace(/\.jpg$/,'')]);await q('UPDATE books SET status=$2,cover_path=$3,thumbnail_path=$4,processing_error=NULL WHERE id=$1',[bookId,'ready',cover,thumb])}catch(error){await fs.rm(optimized,{force:true}).catch(()=>{});await q('UPDATE books SET status=$2,processing_error=$3 WHERE id=$1',[bookId,'error',error.message.slice(0,2000)]);app.log.error({err:error,bookId},'book processing failed')}}
+await app.register(async function apiRoutes(api){
+ api.get('/api/version',async()=>({ok:true,version:APP_VERSION,pid:process.pid}));
+ api.get('/api/health',async()=>({ok:true,storage:DATA_DIR,version:APP_VERSION}));
+ api.get('/api/books',async()=>q('SELECT id,title,original_filename,file_size,status,visibility,created_at,cover_path FROM books WHERE status=$1 ORDER BY created_at DESC',['ready']));
+ api.get('/api/books/:id',async(req,reply)=>{const rows=await q('SELECT id,title,original_filename,file_size,status,visibility,created_at,cover_path,thumbnail_path,processing_error FROM books WHERE id=$1',[req.params.id]);if(!rows[0])return reply.code(404).send({error:'Not found'});return rows[0]});
+ api.get('/api/books/:id/status',async(req,reply)=>{const rows=await q('SELECT id,status,processing_error,cover_path FROM books WHERE id=$1',[req.params.id]);if(!rows[0])return reply.code(404).send({error:'Not found'});return rows[0]});
+ api.get('/api/books/:id/cover',async(req,reply)=>{const rows=await q('SELECT cover_path FROM books WHERE id=$1 AND status=$2',[req.params.id,'ready']);if(!rows[0]?.cover_path)return reply.code(404).send({error:'Cover belum siap'});reply.header('content-type','image/jpeg').header('cache-control','public, max-age=3600');return reply.send(createReadStream(rows[0].cover_path))});
+ api.delete('/api/books/:id',async(req,reply)=>{const rows=await q('SELECT storage_path,cover_path,thumbnail_path FROM books WHERE id=$1',[req.params.id]);if(!rows[0])return reply.code(404).send({error:'Flipbook tidak ditemukan'});await q('DELETE FROM books WHERE id=$1',[req.params.id]);await Promise.all([rows[0].storage_path,rows[0].cover_path,rows[0].thumbnail_path].filter(Boolean).map(x=>fs.rm(x,{force:true})));return{ok:true}});
+ api.post('/api/books/:id/share',async(req,reply)=>{const rows=await q('SELECT id FROM books WHERE id=$1 AND status=$2',[req.params.id,'ready']);if(!rows[0])return reply.code(409).send({error:'Flipbook belum siap dibagikan'});await q('DELETE FROM share_links WHERE expires_at<=NOW()');const token=crypto.randomBytes(24).toString('base64url');const expires=(await q(`INSERT INTO share_links(token,book_id,expires_at) VALUES($1,$2,NOW()+($3||' hours')::interval) RETURNING expires_at`,[token,req.params.id,SHARE_TTL_HOURS]))[0];return{ok:true,token,expiresAt:expires.expires_at,expiresInHours:SHARE_TTL_HOURS,viewer:`/viewer.html?share=${encodeURIComponent(token)}`}});
+ api.get('/api/share/:token',async(req,reply)=>{const rows=await q(`SELECT s.book_id,s.expires_at,b.title FROM share_links s JOIN books b ON b.id=s.book_id WHERE s.token=$1 AND s.expires_at>NOW() AND b.status=$2`,[req.params.token,'ready']);if(!rows[0])return reply.code(410).send({error:'Link sudah kedaluwarsa atau belum siap'});await q('UPDATE share_links SET last_used_at=NOW() WHERE token=$1',[req.params.token]);return{ok:true,id:rows[0].book_id,title:rows[0].title,expiresAt:rows[0].expires_at}});
+ api.post('/api/upload/init',async(req,reply)=>{const {name,size,type,chunkSize}=req.body||{};if(type!=='application/pdf')return reply.code(400).send({error:'Hanya PDF'});if(!Number.isFinite(size)||size<1||size>MAX_FILE_SIZE)return reply.code(400).send({error:'Ukuran file tidak valid'});const requested=Number(chunkSize)||10*1024*1024;const actualChunkSize=Math.min(Math.max(requested,256*1024),MAX_CHUNK_SIZE);const id=crypto.randomUUID(),dir=p('temp',id);await fs.mkdir(dir,{recursive:true});await q('INSERT INTO uploads(id,original_filename,total_size,chunk_size,status,temp_path) VALUES($1,$2,$3,$4,$5,$6)',[id,safeName(name),size,actualChunkSize,'uploading',dir]);return{uploadId:id,chunkSize:actualChunkSize,maxFileSize:MAX_FILE_SIZE,version:APP_VERSION}});
+ api.put('/api/upload/part',async(req,reply)=>{const {uploadId,part}=req.query,n=Number(part);if(!uploadId||!Number.isInteger(n)||n<1)return reply.code(400).send({error:'Part tidak valid'});const upload=(await q('SELECT * FROM uploads WHERE id=$1',[uploadId]))[0];if(!upload)return reply.code(404).send({error:'Upload tidak ditemukan'});let body;try{body=parsePartBody(req.body)}catch(err){return reply.code(400).send({error:err.message})}if(body.length>Number(upload.chunk_size))return reply.code(413).send({error:'Chunk terlalu besar'});const out=path.join(upload.temp_path,`part-${String(n).padStart(8,'0')}`);await fs.writeFile(out,body);await q('INSERT INTO upload_parts(upload_id,part_number,part_size) VALUES($1,$2,$3) ON CONFLICT(upload_id,part_number) DO UPDATE SET part_size=EXCLUDED.part_size',[uploadId,n,body.length]);const progress=(await q('SELECT COALESCE(SUM(part_size),0)::bigint AS uploaded FROM upload_parts WHERE upload_id=$1',[uploadId]))[0];return{ok:true,uploaded:Number(progress.uploaded),total:Number(upload.total_size),version:APP_VERSION}});
+ api.get('/api/upload/:id/status',async(req,reply)=>{const rows=await q('SELECT total_size,chunk_size,status FROM uploads WHERE id=$1',[req.params.id]);if(!rows[0])return reply.code(404).send({error:'Not found'});const parts=await q('SELECT part_number FROM upload_parts WHERE upload_id=$1 ORDER BY part_number',[req.params.id]);return{...rows[0],parts:parts.map(x=>x.part_number),version:APP_VERSION}});
+ api.post('/api/upload/complete',async(req,reply)=>{const {uploadId,title}=req.body||{};const upload=(await q('SELECT * FROM uploads WHERE id=$1',[uploadId]))[0];if(!upload)return reply.code(404).send({error:'Upload tidak ditemukan'});const parts=await q('SELECT part_number,part_size FROM upload_parts WHERE upload_id=$1 ORDER BY part_number',[uploadId]);const total=parts.reduce((s,x)=>s+Number(x.part_size),0);if(total!==Number(upload.total_size))return reply.code(409).send({error:'Upload belum lengkap',uploaded:total,total:Number(upload.total_size)});const bookId=crypto.randomUUID(),filename=`${bookId}-${safeName(upload.original_filename)}`,finalPath=p('books',filename),handle=await fs.open(finalPath,'w');try{for(const part of parts)await handle.write(await fs.readFile(path.join(upload.temp_path,`part-${String(part.part_number).padStart(8,'0')}`)))}finally{await handle.close()}await q('INSERT INTO books(id,title,original_filename,storage_path,file_size,mime_type,status) VALUES($1,$2,$3,$4,$5,$6,$7)',[bookId,title||upload.original_filename.replace(/\.pdf$/i,''),upload.original_filename,finalPath,upload.total_size,'application/pdf','processing']);await q('UPDATE uploads SET status=$2,completed_at=NOW() WHERE id=$1',[uploadId,'completed']);await fs.rm(upload.temp_path,{recursive:true,force:true});processBook(bookId,finalPath);return{ok:true,id:bookId,status:'processing',viewer:`/viewer.html?id=${bookId}`,statusUrl:`/api/books/${bookId}/status`,version:APP_VERSION}});
+ api.post('/api/upload/:id/abort',async req=>{const rows=await q('SELECT temp_path FROM uploads WHERE id=$1',[req.params.id]);if(rows[0])await fs.rm(rows[0].temp_path,{recursive:true,force:true});await q('UPDATE uploads SET status=$2 WHERE id=$1',[req.params.id,'aborted']);return{ok:true}});
+ api.get('/api/media/:id',async(req,reply)=>{const token=req.query?.share;if(token){const allowed=await q('SELECT book_id FROM share_links WHERE token=$1 AND book_id=$2 AND expires_at>NOW()',[token,req.params.id]);if(!allowed[0])return reply.code(410).send({error:'Link sudah kedaluwarsa atau tidak valid'})}const rows=await q('SELECT storage_path,mime_type FROM books WHERE id=$1 AND status=$2',[req.params.id,'ready']);if(!rows[0])return reply.code(404).send({error:'Not found'});let info;try{info=await fs.stat(rows[0].storage_path)}catch{return reply.code(404).send({error:'File PDF tidak ditemukan di storage'})}const size=info.size,range=parseRange(req.headers.range,size);reply.header('content-type',rows[0].mime_type||'application/pdf').header('accept-ranges','bytes').header('cache-control','no-store');if(range==='invalid')return reply.code(416).header('content-range',`bytes */${size}`).send();if(range){const length=range.end-range.start+1;reply.code(206).header('content-range',`bytes ${range.start}-${range.end}/${size}`).header('content-length',length);return reply.send(createReadStream(rows[0].storage_path,{start:range.start,end:range.end}))}reply.header('content-length',size);return reply.send(createReadStream(rows[0].storage_path))});
 });
-
-async function q(sql, args = []) { return (await pool.query(sql, args)).rows; }
-function safeName(name = 'file.pdf') { return path.basename(name).replace(/[^a-zA-Z0-9._ -]/g, '_'); }
-function parsePartBody(body) {
-  if (!body || typeof body !== 'object') throw new Error('Body part tidak valid');
-  if (typeof body.data !== 'string' || !body.data) throw new Error('Data chunk kosong');
-  const data = Buffer.from(body.data, 'base64');
-  if (!data.length) throw new Error('Data chunk kosong');
-  return data;
-}
-function parseRange(header, size) {
-  if (!header || !header.startsWith('bytes=')) return null;
-  const [startRaw, endRaw] = header.slice(6).split('-');
-  let start = startRaw === '' ? NaN : Number(startRaw);
-  let end = endRaw === '' ? NaN : Number(endRaw);
-  if (!Number.isInteger(start) && !Number.isInteger(end)) return 'invalid';
-  if (!Number.isInteger(start)) {
-    const suffix = Math.min(end, size);
-    start = Math.max(0, size - suffix);
-    end = size - 1;
-  } else {
-    if (!Number.isInteger(end) || end >= size) end = size - 1;
-  }
-  if (start < 0 || start >= size || end < start) return 'invalid';
-  return { start, end };
-}
-
-await app.register(async function apiRoutes(api) {
-  api.get('/api/version', async () => ({ ok: true, version: APP_VERSION, pid: process.pid }));
-  api.get('/api/health', async () => ({ ok: true, storage: DATA_DIR, version: APP_VERSION }));
-  api.get('/api/books', async () => q('SELECT id,title,original_filename,file_size,status,visibility,created_at FROM books WHERE status=$1 ORDER BY created_at DESC', ['ready']));
-  api.get('/api/books/:id', async (req, reply) => {
-    const rows = await q('SELECT * FROM books WHERE id=$1', [req.params.id]);
-    if (!rows[0]) return reply.code(404).send({ error: 'Not found' });
-    return rows[0];
-  });
-  api.delete('/api/books/:id', async (req, reply) => {
-    const rows = await q('SELECT storage_path FROM books WHERE id=$1', [req.params.id]);
-    if (!rows[0]) return reply.code(404).send({ error: 'Flipbook tidak ditemukan' });
-    const storagePath = rows[0].storage_path;
-    await q('DELETE FROM books WHERE id=$1', [req.params.id]);
-    await fs.rm(storagePath, { force: true }).catch(() => {});
-    return { ok: true };
-  });
-
-  api.post('/api/books/:id/share', async (req, reply) => {
-    const rows = await q('SELECT id FROM books WHERE id=$1 AND status=$2', [req.params.id, 'ready']);
-    if (!rows[0]) return reply.code(404).send({ error: 'Flipbook tidak ditemukan' });
-    await q('DELETE FROM share_links WHERE expires_at <= NOW()');
-    const token = crypto.randomBytes(24).toString('base64url');
-    const expires = (await q(`INSERT INTO share_links(token,book_id,expires_at)
-      VALUES($1,$2,NOW() + ($3 || ' hours')::interval)
-      RETURNING expires_at`, [token, req.params.id, SHARE_TTL_HOURS]))[0];
-    return { ok: true, token, expiresAt: expires.expires_at, expiresInHours: SHARE_TTL_HOURS, viewer: `/viewer.html?share=${encodeURIComponent(token)}` };
-  });
-
-  api.get('/api/share/:token', async (req, reply) => {
-    const rows = await q(`SELECT s.book_id,s.expires_at,b.title FROM share_links s JOIN books b ON b.id=s.book_id WHERE s.token=$1 AND s.expires_at > NOW() AND b.status=$2`, [req.params.token, 'ready']);
-    if (!rows[0]) return reply.code(410).send({ error: 'Link sudah kedaluwarsa atau tidak valid' });
-    await q('UPDATE share_links SET last_used_at=NOW() WHERE token=$1', [req.params.token]);
-    return { ok: true, id: rows[0].book_id, title: rows[0].title, expiresAt: rows[0].expires_at };
-  });
-
-  api.post('/api/upload/init', async (req, reply) => {
-    const { name, size, type, chunkSize } = req.body || {};
-    if (type !== 'application/pdf') return reply.code(400).send({ error: 'Hanya PDF' });
-    if (!Number.isFinite(size) || size < 1 || size > MAX_FILE_SIZE) return reply.code(400).send({ error: 'Ukuran file tidak valid' });
-    const requested = Number(chunkSize) || 10 * 1024 * 1024;
-    const actualChunkSize = Math.min(Math.max(requested, 256 * 1024), MAX_CHUNK_SIZE);
-    const id = crypto.randomUUID();
-    const dir = p('temp', id);
-    await fs.mkdir(dir, { recursive: true });
-    await q('INSERT INTO uploads(id,original_filename,total_size,chunk_size,status,temp_path) VALUES($1,$2,$3,$4,$5,$6)', [id, safeName(name), size, actualChunkSize, 'uploading', dir]);
-    return { uploadId: id, chunkSize: actualChunkSize, maxFileSize: MAX_FILE_SIZE, version: APP_VERSION };
-  });
-
-  api.put('/api/upload/part', async (req, reply) => {
-    const { uploadId, part } = req.query;
-    const n = Number(part);
-    if (!uploadId || !Number.isInteger(n) || n < 1) return reply.code(400).send({ error: 'Part tidak valid' });
-    const rows = await q('SELECT * FROM uploads WHERE id=$1', [uploadId]);
-    const upload = rows[0];
-    if (!upload) return reply.code(404).send({ error: 'Upload tidak ditemukan' });
-    let body;
-    try { body = parsePartBody(req.body); } catch (err) { return reply.code(400).send({ error: err.message }); }
-    if (body.length > Number(upload.chunk_size)) return reply.code(413).send({ error: 'Chunk terlalu besar' });
-    const out = path.join(upload.temp_path, `part-${String(n).padStart(8, '0')}`);
-    await fs.writeFile(out, body);
-    await q('INSERT INTO upload_parts(upload_id,part_number,part_size) VALUES($1,$2,$3) ON CONFLICT(upload_id,part_number) DO UPDATE SET part_size=EXCLUDED.part_size', [uploadId, n, body.length]);
-    const progress = (await q('SELECT COALESCE(SUM(part_size),0)::bigint AS uploaded FROM upload_parts WHERE upload_id=$1', [uploadId]))[0];
-    return { ok: true, uploaded: Number(progress.uploaded), total: Number(upload.total_size), version: APP_VERSION };
-  });
-
-  api.get('/api/upload/:id/status', async (req, reply) => {
-    const rows = await q('SELECT total_size,chunk_size,status FROM uploads WHERE id=$1', [req.params.id]);
-    if (!rows[0]) return reply.code(404).send({ error: 'Not found' });
-    const parts = await q('SELECT part_number FROM upload_parts WHERE upload_id=$1 ORDER BY part_number', [req.params.id]);
-    return { ...rows[0], parts: parts.map(x => x.part_number), version: APP_VERSION };
-  });
-
-  api.post('/api/upload/complete', async (req, reply) => {
-    const { uploadId, title } = req.body || {};
-    const rows = await q('SELECT * FROM uploads WHERE id=$1', [uploadId]);
-    const upload = rows[0];
-    if (!upload) return reply.code(404).send({ error: 'Upload tidak ditemukan' });
-    const parts = await q('SELECT part_number,part_size FROM upload_parts WHERE upload_id=$1 ORDER BY part_number', [uploadId]);
-    const total = parts.reduce((sum, item) => sum + Number(item.part_size), 0);
-    if (total !== Number(upload.total_size)) return reply.code(409).send({ error: 'Upload belum lengkap', uploaded: total, total: Number(upload.total_size) });
-    const bookId = crypto.randomUUID();
-    const filename = `${bookId}-${safeName(upload.original_filename)}`;
-    const finalPath = p('books', filename);
-    const handle = await fs.open(finalPath, 'w');
-    try { for (const part of parts) await handle.write(await fs.readFile(path.join(upload.temp_path, `part-${String(part.part_number).padStart(8, '0')}`))); } finally { await handle.close(); }
-    await q('INSERT INTO books(id,title,original_filename,storage_path,file_size,mime_type,status) VALUES($1,$2,$3,$4,$5,$6,$7)', [bookId, title || upload.original_filename.replace(/\.pdf$/i, ''), upload.original_filename, finalPath, upload.total_size, 'application/pdf', 'ready']);
-    await q('UPDATE uploads SET status=$2,completed_at=NOW() WHERE id=$1', [uploadId, 'completed']);
-    await fs.rm(upload.temp_path, { recursive: true, force: true });
-    return { ok: true, id: bookId, viewer: `/viewer.html?id=${bookId}`, version: APP_VERSION };
-  });
-
-  api.post('/api/upload/:id/abort', async (req) => {
-    const rows = await q('SELECT temp_path FROM uploads WHERE id=$1', [req.params.id]);
-    if (rows[0]) await fs.rm(rows[0].temp_path, { recursive: true, force: true });
-    await q('UPDATE uploads SET status=$2 WHERE id=$1', [req.params.id, 'aborted']);
-    return { ok: true };
-  });
-
-  api.get('/api/media/:id', async (req, reply) => {
-    const token = req.query?.share;
-    if (token) {
-      const allowed = await q('SELECT book_id FROM share_links WHERE token=$1 AND book_id=$2 AND expires_at > NOW()', [token, req.params.id]);
-      if (!allowed[0]) return reply.code(410).send({ error: 'Link sudah kedaluwarsa atau tidak valid' });
-    }
-    const rows = await q('SELECT storage_path,mime_type FROM books WHERE id=$1 AND status=$2', [req.params.id, 'ready']);
-    if (!rows[0]) return reply.code(404).send({ error: 'Not found' });
-
-    let info;
-    try { info = await fs.stat(rows[0].storage_path); } catch { return reply.code(404).send({ error: 'File PDF tidak ditemukan di storage' }); }
-    const size = info.size;
-    const range = parseRange(req.headers.range, size);
-    reply.header('content-type', rows[0].mime_type || 'application/pdf').header('accept-ranges', 'bytes').header('cache-control', 'no-store');
-    if (range === 'invalid') return reply.code(416).header('content-range', `bytes */${size}`).send();
-    if (range) {
-      const length = range.end - range.start + 1;
-      reply.code(206).header('content-range', `bytes ${range.start}-${range.end}/${size}`).header('content-length', length);
-      return reply.send(createReadStream(rows[0].storage_path, { start: range.start, end: range.end }));
-    }
-    reply.header('content-length', size);
-    return reply.send(createReadStream(rows[0].storage_path));
-  });
-});
-
-app.setErrorHandler((err, req, reply) => {
-  req.log.error({ err, contentType: req.headers['content-type'], version: APP_VERSION }, 'request failed');
-  reply.code(err.statusCode || 500).send({ error: err.message || 'Server error', version: APP_VERSION });
-});
-app.listen({ port: PORT, host: '0.0.0.0' });
+app.setErrorHandler((err,req,reply)=>{req.log.error({err,contentType:req.headers['content-type'],version:APP_VERSION},'request failed');reply.code(err.statusCode||500).send({error:err.message||'Server error',version:APP_VERSION})});
+app.listen({port:PORT,host:'0.0.0.0'});
