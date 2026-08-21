@@ -2,6 +2,7 @@
 set -eu
 
 PROJECT_DIR="${PROJECT_DIR:-/volume1/docker/RevoFlip}"
+COMPOSE_PROJECT="revo-flip"
 OWNER="ediprasetyo-sketch"
 REPO="revo-flip"
 BRANCH="${BRANCH:-main}"
@@ -22,7 +23,8 @@ command -v docker >/dev/null 2>&1 || { echo "ERROR: docker is required"; exit 1;
 
 mkdir -p "$BACKUP_DIR"
 cd "$PROJECT_DIR"
-log "=== Revo Flip update/repair check ==="
+compose() { docker compose -p "$COMPOSE_PROJECT" "$@"; }
+log "=== Revo Flip update/repair check (project=$COMPOSE_PROJECT) ==="
 
 API_URL="https://api.github.com/repos/$OWNER/$REPO/commits/$BRANCH"
 NEW="$(curl -fsSL "$API_URL" | sed -n 's/^[[:space:]]*"sha": "\([0-9a-f]*\)".*/\1/p' | head -n 1)"
@@ -32,12 +34,14 @@ RUNTIME="$(curl -fsS --max-time 5 http://127.0.0.1:3000/api/version 2>/dev/null 
 ACTUAL="$(printf '%s' "$RUNTIME" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
 log "Installed=${OLD:-none} Latest=$NEW Runtime=${ACTUAL:-missing}"
 
-if [ "$OLD" = "$NEW" ] && [ "$ACTUAL" = "$NEW" ]; then
-  log "Already up to date and runtime verified"
+# Also repair a container that is running outside the Compose project.
+APP_PROJECT="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' revo-flip-app 2>/dev/null || true)"
+if [ "$OLD" = "$NEW" ] && [ "$ACTUAL" = "$NEW" ] && [ "$APP_PROJECT" = "$COMPOSE_PROJECT" ]; then
+  log "Already up to date, runtime verified, and container belongs to project $COMPOSE_PROJECT"
   exit 0
 fi
 
-log "Runtime/source mismatch detected. Performing forced repair."
+log "Runtime/source/project mismatch detected. Performing forced repair."
 
 log "[1/8] Downloading exact commit $NEW"
 curl -fsSL "https://codeload.github.com/$OWNER/$REPO/tar.gz/$NEW" -o "$ARCHIVE"
@@ -46,8 +50,8 @@ tar -xzf "$ARCHIVE" -C "$WORK_DIR/source" --strip-components=1
 [ -f "$WORK_DIR/source/server.js" ] || { log "ERROR: downloaded source invalid"; exit 1; }
 grep -q "/api/version" "$WORK_DIR/source/server.js" || { log "ERROR: downloaded source lacks /api/version"; exit 1; }
 
-log "[2/8] Validating compose configuration"
-if ! docker compose config >> "$LOG_FILE" 2>&1; then
+log "[2/8] Validating compose configuration for project $COMPOSE_PROJECT"
+if ! compose config >> "$LOG_FILE" 2>&1; then
   log "ERROR: docker compose config failed"
   exit 1
 fi
@@ -73,29 +77,33 @@ printf '%s\n' "$NEW" > "$VERSION_FILE"
 grep -q "/api/version" "$PROJECT_DIR/server.js" || { log "ERROR: staged server.js lacks /api/version"; exit 1; }
 log "Staged source verified"
 
-log "[5/8] Removing old app container"
-docker compose rm -sf app >> "$LOG_FILE" 2>&1 || true
+log "[5/8] Removing any old app container and Compose app service"
+# Remove a legacy standalone container with the same fixed name if present.
+docker rm -f revo-flip-app >> "$LOG_FILE" 2>&1 || true
+compose rm -sf app >> "$LOG_FILE" 2>&1 || true
 
-log "[6/8] Building app with no cache"
-if ! docker compose build --no-cache --pull app >> "$LOG_FILE" 2>&1; then
+log "[6/8] Building app with no cache under project $COMPOSE_PROJECT"
+if ! compose build --no-cache --pull app >> "$LOG_FILE" 2>&1; then
   log "ERROR: docker build failed"
   exit 1
 fi
 
-log "[7/8] Starting freshly built app"
-if ! docker compose up -d --no-deps --force-recreate app >> "$LOG_FILE" 2>&1; then
+log "[7/8] Starting freshly built app inside project $COMPOSE_PROJECT"
+if ! compose up -d --no-deps --force-recreate app >> "$LOG_FILE" 2>&1; then
   log "ERROR: docker compose up failed"
   exit 1
 fi
 
-CID="$(docker compose ps -q app)"
+CID="$(compose ps -q app)"
 [ -n "$CID" ] || { log "ERROR: app container not found after start"; exit 1; }
+RUN_PROJECT="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$CID" 2>/dev/null || true)"
+[ "$RUN_PROJECT" = "$COMPOSE_PROJECT" ] || { log "ERROR: app started outside expected project: ${RUN_PROJECT:-missing}"; exit 1; }
 if ! docker exec "$CID" sh -c 'grep -q "/api/version" /app/server.js'; then
   log "ERROR: running container does not contain new server.js"
   exit 1
 fi
 IMAGE_VERSION="$(docker exec "$CID" sh -c 'cat /app/.revo-flip-version 2>/dev/null || true')"
-log "Container=$CID ImageVersion=${IMAGE_VERSION:-missing}"
+log "Container=$CID Project=$RUN_PROJECT ImageVersion=${IMAGE_VERSION:-missing}"
 
 log "[8/8] Verifying HTTP runtime"
 i=0
@@ -112,5 +120,5 @@ if [ "$ACTUAL" != "$NEW" ]; then
   log "ERROR: HTTP runtime mismatch expected=$NEW actual=${ACTUAL:-missing}"
   exit 1
 fi
-log "SUCCESS: exact version verified: $ACTUAL"
+log "SUCCESS: exact version and project verified: $ACTUAL / $RUN_PROJECT"
 log "Backup: $BACKUP"
