@@ -4,21 +4,29 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Revo Learning Flip</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/home-reference.css">
 </head>
 <body class="simple-home">
   <header class="simple-header">
-    <a class="logo" href="/">
-      <span class="brand-mark" aria-hidden="true">▮▮</span>
-      <span>Revo Learning Flip</span>
-    </a>
+    <div class="home-shell">
+      <a class="logo" href="/" aria-label="Revo Learning Flip">
+        <span class="brand-mark" aria-hidden="true"><i class="fas fa-book-open"></i></span>
+        <span>Revo Learning Flip</span>
+      </a>
+    </div>
   </header>
 
   <main class="simple-home-main">
     <section class="upload-hero" id="uploadHero">
-      <h1>Welcome Revo<br>Learning Flip</h1>
-      <button id="pickPdf" class="upload-main-button" type="button"><span class="upload-icon">⇧</span><span>Upload File PDF</span></button>
+      <h1>Welcome Revo Learning Flip</h1>
+      <button id="pickPdf" class="upload-main-button" type="button">
+        <i class="fas fa-upload upload-icon" aria-hidden="true"></i><span>Upload File PDF</span>
+      </button>
       <p class="upload-limit">Maksimal ukuran file: 50MB</p>
       <input id="fileInput" type="file" accept="application/pdf,.pdf" hidden>
       <div id="quickUpload" class="quick-upload" hidden aria-live="polite">
@@ -31,7 +39,7 @@
   </main>
 
   <footer class="simple-footer">
-    <span class="footer-mark" aria-hidden="true">▮▮</span>
+    <span class="footer-mark" aria-hidden="true"><i class="fas fa-book-open"></i></span>
     <span>© 2026 Revo Learning Flip. All rights reserved.</span>
   </footer>
   <script src="/home.js"></script>
