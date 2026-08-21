@@ -11,16 +11,15 @@
     <a class="logo" href="/">▮▮ <span>Revo Learning Flip</span></a>
   </header>
   <main class="simple-home-main">
-    <section class="upload-hero">
+    <section class="upload-hero" id="uploadHero">
       <h1>Welcome Revo<br>Learning Flip</h1>
       <button id="pickPdf" class="upload-main-button" type="button">⇧ <span>Upload File PDF</span></button>
       <input id="fileInput" type="file" accept="application/pdf,.pdf" hidden>
-      <p id="uploadHint">Maksimal ukuran file: 10 GB</p>
-      <div id="quickUpload" class="quick-upload" hidden>
+      <p id="uploadHint">Pilih PDF — upload akan dimulai otomatis</p>
+      <div id="quickUpload" class="quick-upload" hidden aria-live="polite">
         <div class="quick-file"><strong id="fileName"></strong><span id="fileSize"></span></div>
         <div class="progress"><i id="progressBar"></i></div>
         <div class="upload-meta"><span id="progressText">Menyiapkan upload…</span><span id="speedText">—</span></div>
-        <button id="startUpload" class="button" type="button">Mulai Upload</button>
         <div id="status" class="status"></div>
       </div>
     </section>
