@@ -4,13 +4,17 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Revo Learning Flip</title>
-<link rel="stylesheet" href="/styles.css">
-<link rel="stylesheet" href="/viewer-reference.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css?v=20260821-brand-v4">
+<link rel="stylesheet" href="/viewer-reference.css?v=20260821-brand-v4">
 </head>
 <body class="flip-page">
 <header class="simple-header viewer-header">
   <a class="logo" href="/" aria-label="Kembali ke Revo Learning Flip">
-    <span class="brand-mark">▮▮</span><span>Revo Learning Flip</span>
+    <span class="brand-mark" aria-hidden="true"><i class="fas fa-book-open"></i></span><span>Revo Learning Flip</span>
   </a>
 </header>
 <main class="flip-main">
@@ -34,6 +38,10 @@
     <button id="delete" class="delete-button" hidden>🗑 <span>Hapus</span></button>
   </div>
 </main>
+<footer class="simple-footer viewer-footer">
+  <span class="footer-mark" aria-hidden="true"><i class="fas fa-book-open"></i></span>
+  <span>© 2026 Revo Learning Flip. All rights reserved.</span>
+</footer>
 <div id="orientationOverlay" class="orientation-overlay" hidden>
   <div class="orientation-icon" aria-hidden="true">↻</div>
   <h2>Putar Layar HP Anda</h2>
@@ -42,6 +50,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/turn.js/3/turn.min.js"></script>
-<script src="/viewer.js"></script>
+<script src="/viewer.js?v=20260821-brand-v4"></script>
 </body>
 </html>
