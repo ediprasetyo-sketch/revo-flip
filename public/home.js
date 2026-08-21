@@ -1,4 +1,4 @@
-const RELEASE = '20260821-pipeline-v3';
+const RELEASE = '20260821-final-v1';
 const MAX_FILE_SIZE = 10 * 1024 ** 3;
 const CHUNK_SIZE = 10 * 1024 ** 2;
 const RETRIES = 3;
@@ -12,68 +12,16 @@ const bar = document.querySelector('#progressBar');
 const progress = document.querySelector('#progressText');
 const speed = document.querySelector('#speedText');
 const status = document.querySelector('#status');
-let file = null;
-let uploading = false;
-
+let file = null, uploading = false;
 const key = f => `revoflip:${f.name}:${f.size}:${f.lastModified}`;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 function formatSize(n){const u=['B','KB','MB','GB','TB'];let i=0;while(n>=1024&&i<u.length-1){n/=1024;i++}return `${n.toFixed(i?2:0)} ${u[i]}`}
 function errorFromResponse(r,fallback){return r.json().then(x=>x.error||x.message||fallback).catch(()=>fallback)}
-async function blobToBase64(blob){const buffer=await blob.arrayBuffer();const bytes=new Uint8Array(buffer);let binary='';const step=0x8000;for(let i=0;i<bytes.length;i+=step)binary+=String.fromCharCode(...bytes.subarray(i,i+step));return btoa(binary)}
-async function retry(fn){let last;for(let i=0;i<RETRIES;i++){try{return await fn()}catch(err){last=err;if(i<RETRIES-1)await new Promise(r=>setTimeout(r,700*(i+1)))}}throw last}
+async function blobToBase64(blob){const buffer=await blob.arrayBuffer(),bytes=new Uint8Array(buffer);let binary='';for(let i=0;i<bytes.length;i+=0x8000)binary+=String.fromCharCode(...bytes.subarray(i,i+0x8000));return btoa(binary)}
+async function retry(fn){let last;for(let i=0;i<RETRIES;i++){try{return await fn()}catch(err){last=err;if(i<RETRIES-1)await sleep(700*(i+1))}}throw last}
 async function checkServer(){try{const r=await fetch(`/api/version?release=${RELEASE}`,{cache:'no-store'});return r.ok?await r.json():null}catch{return null}}
 function setPhase(text,detail){progress.textContent=text;if(detail!==undefined)speed.textContent=detail}
-
-function selectFile(f){
-  if(!f||uploading)return;
-  if(f.type&&f.type!=='application/pdf'&&!/\.pdf$/i.test(f.name)){status.textContent='Hanya file PDF yang didukung.';panel.hidden=false;return}
-  if(f.size>MAX_FILE_SIZE){status.textContent='Ukuran file melebihi batas 10 GB.';panel.hidden=false;return}
-  file=f;
-  nameEl.textContent=f.name;
-  sizeEl.textContent=formatSize(f.size);
-  panel.hidden=false;
-  panel.classList.remove('upload-card-enter');void panel.offsetWidth;panel.classList.add('upload-card-enter');
-  bar.style.width='0%';
-  setPhase(localStorage.getItem(key(f))?'Melanjutkan sesi upload sebelumnya…':'Upload dimulai otomatis…','—');
-  status.textContent='';
-  uploadSelectedFile();
-}
-pick.addEventListener('click',()=>{if(!uploading)input.click()});
-input.addEventListener('change',e=>{selectFile(e.target.files[0]);input.value=''});
-
-async function uploadSelectedFile(){
-  if(!file||uploading)return;
-  uploading=true;pick.disabled=true;
-  const storageKey=key(file);const started=performance.now();
-  try{
-    const server=await checkServer();if(server?.version)console.info('Revo Learning Flip server',server.version,'client',RELEASE);
-    let session=JSON.parse(localStorage.getItem(storageKey)||'null');
-    if(!session){
-      setPhase('Menyiapkan sesi upload…','');
-      const r=await fetch('/api/upload/init',{method:'POST',headers:{'content-type':'application/json','x-revo-release':RELEASE},cache:'no-store',body:JSON.stringify({name:file.name,size:file.size,type:'application/pdf',chunkSize:CHUNK_SIZE})});
-      if(!r.ok)throw new Error(await errorFromResponse(r,'Gagal membuat sesi upload'));
-      session=await r.json();
-      if(Number.isFinite(Number(session.maxFileSize))&&Number(session.maxFileSize)<file.size)throw new Error(`Server aktif masih membatasi upload hingga ${formatSize(Number(session.maxFileSize))}. Redeploy server versi terbaru diperlukan`);
-      localStorage.setItem(storageKey,JSON.stringify(session));
-    }
-    const chunkSize=Number(session.chunkSize)||CHUNK_SIZE;
-    const st=await fetch(`/api/upload/${encodeURIComponent(session.uploadId)}/status?release=${RELEASE}`,{cache:'no-store'});
-    if(!st.ok){localStorage.removeItem(storageKey);throw new Error(await errorFromResponse(st,'Sesi upload tidak tersedia'))}
-    const state=await st.json();const done=new Set((state.parts||[]).map(Number));const totalParts=Math.ceil(file.size/chunkSize);
-    let uploaded=0;for(const part of done){const off=(part-1)*chunkSize;uploaded+=Math.max(0,Math.min(chunkSize,file.size-off))}
-    if(uploaded){const pct=file.size?uploaded/file.size*100:100;bar.style.width=`${pct}%`;setPhase(`${pct.toFixed(1)}% — melanjutkan upload`,'')}
-    for(let part=1;part<=totalParts;part++){
-      if(done.has(part))continue;
-      const offset=(part-1)*chunkSize;const chunk=file.slice(offset,Math.min(offset+chunkSize,file.size),'application/octet-stream');
-      await retry(async()=>{const data=await blobToBase64(chunk);const r=await fetch(`/api/upload/part?uploadId=${encodeURIComponent(session.uploadId)}&part=${part}&release=${RELEASE}`,{method:'PUT',headers:{'content-type':'application/json','x-revo-release':RELEASE},cache:'no-store',body:JSON.stringify({data})});if(!r.ok)throw new Error(await errorFromResponse(r,`Part ${part} gagal (${r.status})`))});
-      uploaded+=chunk.size;const pct=file.size?uploaded/file.size*100:100;bar.style.width=`${pct}%`;progress.textContent=`${pct.toFixed(1)}% — bagian ${part}/${totalParts}`;
-      const secs=(performance.now()-started)/1000;speed.textContent=`${formatSize(uploaded/Math.max(secs,.1))}/s`;
-    }
-    bar.style.width='100%';setPhase('100% — upload selesai','Memverifikasi PDF…');status.textContent='Memproses file sebelum membuka buku…';
-    const complete=await fetch('/api/upload/complete',{method:'POST',headers:{'content-type':'application/json','x-revo-release':RELEASE},cache:'no-store',body:JSON.stringify({uploadId:session.uploadId,title:file.name.replace(/\.pdf$/i,'')})});
-    if(!complete.ok)throw new Error(await errorFromResponse(complete,'Gagal menyelesaikan upload'));
-    const result=await complete.json();localStorage.removeItem(storageKey);
-    setPhase('100% — siap','Membuka flipbook…');status.textContent='PDF siap. Menyiapkan halaman pertama…';
-    hero.classList.add('leaving-viewer');
-    setTimeout(()=>location.replace(result.viewer),650);
-  }catch(err){console.error(err);status.textContent=`Upload terhenti: ${err.message}. Pilih file yang sama untuk melanjutkan otomatis.`;pick.disabled=false;uploading=false}
-}
+async function waitForReady(id){let attempt=0;const phases=['Memeriksa struktur PDF…','Mengoptimalkan buku…','Menyiapkan cover halaman pertama…','Menyelesaikan flipbook…'];while(true){const r=await fetch(`/api/books/${encodeURIComponent(id)}/status`,{cache:'no-store'}),data=await r.json().catch(()=>({}));if(!r.ok)throw new Error(data.error||'Status processing tidak tersedia');if(data.status==='ready')return data;if(data.status==='error')throw new Error(data.processing_error||'PDF gagal diproses');attempt++;const phase=Math.min(phases.length-1,Math.floor(attempt/2));const pct=Math.min(99,92+Math.min(attempt,14)*0.5);bar.style.width=`${pct}%`;setPhase(`${pct.toFixed(0)}% — processing`,phases[phase]);status.textContent='Upload selesai ✓  PDF sedang disiapkan agar pembaca dapat dibuka lebih cepat.';await sleep(1500)}}
+function selectFile(f){if(!f||uploading)return;if(f.type&&f.type!=='application/pdf'&&!/\.pdf$/i.test(f.name)){status.textContent='Hanya file PDF yang didukung.';panel.hidden=false;return}if(f.size>MAX_FILE_SIZE){status.textContent='Ukuran file melebihi batas 10 GB.';panel.hidden=false;return}file=f;nameEl.textContent=f.name;sizeEl.textContent=formatSize(f.size);panel.hidden=false;panel.classList.remove('upload-card-enter');void panel.offsetWidth;panel.classList.add('upload-card-enter');bar.style.width='0%';setPhase(localStorage.getItem(key(f))?'Melanjutkan sesi upload sebelumnya…':'Upload dimulai otomatis…','—');status.textContent='';uploadSelectedFile()}
+pick.addEventListener('click',()=>{if(!uploading)input.click()});input.addEventListener('change',e=>{selectFile(e.target.files[0]);input.value=''});
+async function uploadSelectedFile(){if(!file||uploading)return;uploading=true;pick.disabled=true;const storageKey=key(file),started=performance.now();try{await checkServer();let session=JSON.parse(localStorage.getItem(storageKey)||'null');if(!session){setPhase('Menyiapkan sesi upload…','');const r=await fetch('/api/upload/init',{method:'POST',headers:{'content-type':'application/json','x-revo-release':RELEASE},cache:'no-store',body:JSON.stringify({name:file.name,size:file.size,type:'application/pdf',chunkSize:CHUNK_SIZE})});if(!r.ok)throw new Error(await errorFromResponse(r,'Gagal membuat sesi upload'));session=await r.json();if(Number(session.maxFileSize)<file.size)throw new Error(`Server aktif masih membatasi upload hingga ${formatSize(Number(session.maxFileSize))}`);localStorage.setItem(storageKey,JSON.stringify(session))}const chunkSize=Number(session.chunkSize)||CHUNK_SIZE;const st=await fetch(`/api/upload/${encodeURIComponent(session.uploadId)}/status?release=${RELEASE}`,{cache:'no-store'});if(!st.ok){localStorage.removeItem(storageKey);throw new Error(await errorFromResponse(st,'Sesi upload tidak tersedia'))}const state=await st.json(),done=new Set((state.parts||[]).map(Number)),totalParts=Math.ceil(file.size/chunkSize);let uploaded=0;for(const part of done){const off=(part-1)*chunkSize;uploaded+=Math.max(0,Math.min(chunkSize,file.size-off))}for(let part=1;part<=totalParts;part++){if(done.has(part))continue;const offset=(part-1)*chunkSize,chunk=file.slice(offset,Math.min(offset+chunkSize,file.size),'application/octet-stream');await retry(async()=>{const data=await blobToBase64(chunk),r=await fetch(`/api/upload/part?uploadId=${encodeURIComponent(session.uploadId)}&part=${part}&release=${RELEASE}`,{method:'PUT',headers:{'content-type':'application/json','x-revo-release':RELEASE},cache:'no-store',body:JSON.stringify({data})});if(!r.ok)throw new Error(await errorFromResponse(r,`Part ${part} gagal (${r.status})`))});uploaded+=chunk.size;const pct=file.size?uploaded/file.size*100:100;bar.style.width=`${pct}%`;progress.textContent=`${pct.toFixed(1)}% — bagian ${part}/${totalParts}`;speed.textContent=`${formatSize(uploaded/Math.max((performance.now()-started)/1000,.1))}/s`}bar.style.width='91%';setPhase('100% — upload selesai','Memulai processing…');status.textContent='Memverifikasi dan menyiapkan PDF…';const complete=await fetch('/api/upload/complete',{method:'POST',headers:{'content-type':'application/json','x-revo-release':RELEASE},cache:'no-store',body:JSON.stringify({uploadId:session.uploadId,title:file.name.replace(/\.pdf$/i,'')})});if(!complete.ok)throw new Error(await errorFromResponse(complete,'Gagal menyelesaikan upload'));const result=await complete.json();localStorage.removeItem(storageKey);await waitForReady(result.id);bar.style.width='100%';setPhase('100% — siap','Buku siap dibuka ✓');status.textContent='Halaman pertama sudah disiapkan.';hero.classList.add('leaving-viewer');setTimeout(()=>location.replace(result.viewer),500)}catch(err){console.error(err);status.textContent=`Upload/processing terhenti: ${err.message}. Pilih file yang sama untuk melanjutkan upload.`;pick.disabled=false;uploading=false}}
