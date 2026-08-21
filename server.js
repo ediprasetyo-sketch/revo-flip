@@ -15,7 +15,12 @@ const MAX_FILE_SIZE = Number(process.env.MAX_FILE_SIZE || 10 * 1024 ** 3);
 const MAX_CHUNK_SIZE = 15 * 1024 * 1024;
 const VERSION_FILE = path.join(__dirname, '.revo-flip-version');
 const APP_VERSION = (await fs.readFile(VERSION_FILE, 'utf8').catch(() => 'dev')).trim() || 'dev';
-const pool = new Pool({ connectionString: process.env.DATABASE_URL || 'postgres://revo:revo@postgres:5432/revoflip' });
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) throw new Error('DATABASE_URL is not configured');
+let database;
+try { database = new URL(databaseUrl); } catch { throw new Error('DATABASE_URL is invalid'); }
+if (!database.password) throw new Error('DATABASE_URL password is missing');
+const pool = new Pool({ connectionString: databaseUrl });
 const p = (...x) => path.join(DATA_DIR, ...x);
 
 await Promise.all(['temp', 'books', 'covers', 'thumbnails'].map(x => fs.mkdir(p(x), { recursive: true })));
