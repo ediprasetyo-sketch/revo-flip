@@ -32,10 +32,9 @@ NEW="$(curl -fsSL "$API_URL" | sed -n 's/^[[:space:]]*"sha": "\([0-9a-f]*\)".*/\
 OLD="$(cat "$VERSION_FILE" 2>/dev/null || true)"
 RUNTIME="$(curl -fsS --max-time 5 http://127.0.0.1:3000/api/version 2>/dev/null || true)"
 ACTUAL="$(printf '%s' "$RUNTIME" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
-log "Installed=${OLD:-none} Latest=$NEW Runtime=${ACTUAL:-missing}"
-
-# Also repair a container that is running outside the Compose project.
 APP_PROJECT="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' revo-flip-app 2>/dev/null || true)"
+log "Installed=${OLD:-none} Latest=$NEW Runtime=${ACTUAL:-missing} Project=${APP_PROJECT:-missing}"
+
 if [ "$OLD" = "$NEW" ] && [ "$ACTUAL" = "$NEW" ] && [ "$APP_PROJECT" = "$COMPOSE_PROJECT" ]; then
   log "Already up to date, runtime verified, and container belongs to project $COMPOSE_PROJECT"
   exit 0
@@ -49,20 +48,14 @@ mkdir -p "$WORK_DIR/source"
 tar -xzf "$ARCHIVE" -C "$WORK_DIR/source" --strip-components=1
 [ -f "$WORK_DIR/source/server.js" ] || { log "ERROR: downloaded source invalid"; exit 1; }
 grep -q "/api/version" "$WORK_DIR/source/server.js" || { log "ERROR: downloaded source lacks /api/version"; exit 1; }
+[ -f "$WORK_DIR/source/docker-compose.yml" ] || { log "ERROR: downloaded source lacks docker-compose.yml"; exit 1; }
 
-log "[2/8] Validating compose configuration for project $COMPOSE_PROJECT"
-if ! compose config >> "$LOG_FILE" 2>&1; then
-  log "ERROR: docker compose config failed"
-  exit 1
-fi
-
-log "[3/8] Backing up current source"
+log "[2/8] Backing up current source"
 BACKUP="$BACKUP_DIR/source-$STAMP.tar.gz"
 tar --exclude='./storage' --exclude='./postgres' --exclude='./backups' --exclude='./.env' --exclude='./.revo-flip-version' --exclude='./revo-flip-update.log' -czf "$BACKUP" -C "$PROJECT_DIR" .
 
-log "[4/8] Replacing application source"
+log "[3/8] Replacing application source and Compose definition"
 [ -f "$PROJECT_DIR/.env" ] && cp "$PROJECT_DIR/.env" "$WORK_DIR/env.keep"
-[ -f "$PROJECT_DIR/docker-compose.yml" ] && cp "$PROJECT_DIR/docker-compose.yml" "$WORK_DIR/compose.keep"
 for f in "$WORK_DIR/source"/* "$WORK_DIR/source"/.[!.]*; do
   [ -e "$f" ] || continue
   name="$(basename "$f")"
@@ -71,18 +64,20 @@ for f in "$WORK_DIR/source"/* "$WORK_DIR/source"/.[!.]*; do
   cp -R "$f" "$PROJECT_DIR/$name"
 done
 [ -f "$WORK_DIR/env.keep" ] && cp "$WORK_DIR/env.keep" "$PROJECT_DIR/.env"
-[ -f "$WORK_DIR/compose.keep" ] && cp "$WORK_DIR/compose.keep" "$PROJECT_DIR/docker-compose.yml"
 printf '%s\n' "$NEW" > "$VERSION_FILE"
-
 grep -q "/api/version" "$PROJECT_DIR/server.js" || { log "ERROR: staged server.js lacks /api/version"; exit 1; }
-log "Staged source verified"
 
-log "[5/8] Removing any old app container and Compose app service"
-# Remove a legacy standalone container with the same fixed name if present.
+log "[4/8] Validating downloaded Compose configuration"
+if ! compose config >> "$LOG_FILE" 2>&1; then
+  log "ERROR: docker compose config failed"
+  exit 1
+fi
+
+log "[5/8] Removing any old app container and stale image"
 docker rm -f revo-flip-app >> "$LOG_FILE" 2>&1 || true
 compose rm -sf app >> "$LOG_FILE" 2>&1 || true
 
-log "[6/8] Building app with no cache under project $COMPOSE_PROJECT"
+log "[6/8] Building exact source with no cache"
 if ! compose build --no-cache --pull app >> "$LOG_FILE" 2>&1; then
   log "ERROR: docker build failed"
   exit 1
@@ -99,26 +94,28 @@ CID="$(compose ps -q app)"
 RUN_PROJECT="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$CID" 2>/dev/null || true)"
 [ "$RUN_PROJECT" = "$COMPOSE_PROJECT" ] || { log "ERROR: app started outside expected project: ${RUN_PROJECT:-missing}"; exit 1; }
 if ! docker exec "$CID" sh -c 'grep -q "/api/version" /app/server.js'; then
-  log "ERROR: running container does not contain new server.js"
+  log "ERROR: running container does not contain /api/version"
   exit 1
 fi
 IMAGE_VERSION="$(docker exec "$CID" sh -c 'cat /app/.revo-flip-version 2>/dev/null || true')"
-log "Container=$CID Project=$RUN_PROJECT ImageVersion=${IMAGE_VERSION:-missing}"
+[ "$IMAGE_VERSION" = "$NEW" ] || { log "ERROR: container version file mismatch expected=$NEW actual=${IMAGE_VERSION:-missing}"; exit 1; }
+log "Container=$CID Project=$RUN_PROJECT ImageVersion=$IMAGE_VERSION"
 
-log "[8/8] Verifying HTTP runtime"
+log "[8/8] Verifying container HTTP runtime and NAS port"
 i=0
 ACTUAL=""
 while [ "$i" -lt 30 ]; do
-  RUNTIME="$(curl -fsS --max-time 5 http://127.0.0.1:3000/api/version 2>/dev/null || true)"
-  ACTUAL="$(printf '%s' "$RUNTIME" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
+  INSIDE="$(docker exec "$CID" sh -c 'wget -qO- http://127.0.0.1:3000/api/version 2>/dev/null || true')"
+  ACTUAL="$(printf '%s' "$INSIDE" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
   [ "$ACTUAL" = "$NEW" ] && break
   i=$((i + 1))
   sleep 2
 done
+[ "$ACTUAL" = "$NEW" ] || { log "ERROR: container HTTP mismatch expected=$NEW actual=${ACTUAL:-missing}"; exit 1; }
 
-if [ "$ACTUAL" != "$NEW" ]; then
-  log "ERROR: HTTP runtime mismatch expected=$NEW actual=${ACTUAL:-missing}"
-  exit 1
-fi
-log "SUCCESS: exact version and project verified: $ACTUAL / $RUN_PROJECT"
+HOST_RUNTIME="$(curl -fsS --max-time 5 http://127.0.0.1:3000/api/version 2>/dev/null || true)"
+HOST_VERSION="$(printf '%s' "$HOST_RUNTIME" | sed -n 's/.*"version":"\([^"]*\)".*/\1/p')"
+[ "$HOST_VERSION" = "$NEW" ] || { log "ERROR: NAS port mismatch expected=$NEW actual=${HOST_VERSION:-missing}"; exit 1; }
+
+log "SUCCESS: exact source, container, NAS port, and project verified: $NEW / $RUN_PROJECT"
 log "Backup: $BACKUP"
