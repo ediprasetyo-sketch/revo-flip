@@ -27,5 +27,13 @@ CREATE TABLE IF NOT EXISTS upload_parts (
  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
  PRIMARY KEY(upload_id,part_number)
 );
+CREATE TABLE IF NOT EXISTS share_links (
+ token TEXT PRIMARY KEY,
+ book_id UUID NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+ expires_at TIMESTAMPTZ NOT NULL,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+ last_used_at TIMESTAMPTZ
+);
 CREATE INDEX IF NOT EXISTS idx_books_status_created ON books(status,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_uploads_status ON uploads(status);
+CREATE INDEX IF NOT EXISTS idx_share_links_book_expiry ON share_links(book_id,expires_at);
