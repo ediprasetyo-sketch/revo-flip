@@ -1,1 +1,30 @@
-<!doctype html><html lang="id"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Viewer - Revo Flip</title><link rel="stylesheet" href="/styles.css"></head><body><header><a class="brand" href="/">REVO <span>FLIP</span></a><div class="viewer-tools"><button id="prev">←</button><span id="pageLabel">Halaman 1</span><button id="next">→</button><button id="zoomOut">−</button><button id="zoomIn">+</button><button id="fullscreen">⛶</button></div></header><main class="viewer"><div id="bookStage" class="book-stage"><div class="placeholder-page"><p>Flipbook Viewer</p><small>PDF akan dirender setelah backend upload dan media endpoint aktif.</small></div></div></main><script src="/viewer.js"></script></body></html>
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Revo Learning Flip</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="flip-page">
+  <header class="simple-header">
+    <a class="logo" href="/">▮▮ <span>Revo Learning Flip</span></a>
+  </header>
+  <main class="flip-main">
+    <section id="bookStage" class="flip-stage">
+      <div class="flip-loading">Memuat PDF…</div>
+      <canvas id="pdfCanvas"></canvas>
+    </section>
+    <section class="flip-controls" aria-label="Kontrol flipbook">
+      <button id="prev" aria-label="Halaman sebelumnya">‹</button>
+      <span id="pageLabel">1 / 1</span>
+      <button id="next" aria-label="Halaman berikutnya">›</button>
+      <i></i>
+      <button id="share" class="share-button">⌘ Bagikan</button>
+    </section>
+  </main>
+  <footer class="simple-footer">▮▮<br><span>© 2026 Revo Learning Flip. All rights reserved.</span></footer>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="/viewer.js"></script>
+</body>
+</html>
