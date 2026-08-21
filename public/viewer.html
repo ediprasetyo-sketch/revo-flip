@@ -1,20 +1,24 @@
 <!doctype html>
 <html lang="id">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Revo Learning Flip</title><link rel="stylesheet" href="/styles.css"></head>
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Revo Learning Flip</title><link rel="stylesheet" href="/styles.css">
+</head>
 <body class="flip-page">
 <header class="simple-header"><a class="logo" href="/">▮▮ <span>Revo Learning Flip</span></a></header>
 <main class="flip-main">
-  <section id="bookStage" class="flip-stage">
-    <div id="book" class="real-book" aria-live="polite">
-      <div class="page-stack page-stack-left"></div>
-      <div class="page-stack page-stack-right"></div>
-      <div id="staticPage" class="book-page static-page"><canvas id="currentCanvas"></canvas></div>
-      <div id="turningPage" class="book-page turning-page"><div class="page-front"><canvas id="frontCanvas"></canvas></div><div class="page-back"><canvas id="backCanvas"></canvas></div></div>
-      <div class="book-gutter"></div>
-    </div>
-    <div class="flip-loading">Memuat flipbook…</div>
-  </section>
-  <div class="flip-controls"><button id="prev" class="nav-button" aria-label="Halaman sebelumnya">‹</button><span id="pageLabel">– / –</span><button id="next" class="nav-button" aria-label="Halaman berikutnya">›</button><i></i><button id="share" class="share-button">↗ <span>Bagikan</span></button></div>
+<section id="bookStage" class="flip-stage">
+  <div id="book" class="real-book" aria-live="polite">
+    <div class="book-shadow"></div>
+    <div class="page-stack stack-left"></div><div class="page-stack stack-right"></div>
+    <div class="spread left-sheet"><canvas id="leftCanvas"></canvas></div>
+    <div class="spread right-sheet"><canvas id="rightCanvas"></canvas></div>
+    <div id="turningPage" class="turning-page"><div class="page-face page-front"><canvas id="frontCanvas"></canvas></div><div class="page-face page-back"><canvas id="backCanvas"></canvas></div></div>
+    <div class="book-gutter"></div><div class="moving-shadow"></div>
+  </div>
+  <div class="flip-loading">Memuat flipbook…</div>
+</section>
+<div class="flip-controls"><button id="prev" class="nav-button" aria-label="Halaman sebelumnya">‹</button><span id="pageLabel">– / –</span><button id="next" class="nav-button" aria-label="Halaman berikutnya">›</button><i></i><button id="share" class="share-button">↗ <span>Bagikan</span></button></div>
 </main>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script><script src="/viewer.js"></script>
 </body></html>
