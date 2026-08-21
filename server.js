@@ -16,8 +16,6 @@ const pool=new Pool({connectionString:process.env.DATABASE_URL||'postgres://revo
 const p=(...x)=>path.join(DATA_DIR,...x);
 await Promise.all(['temp','books','covers','thumbnails'].map(x=>fs.mkdir(p(x),{recursive:true})));
 
-// Terima semua variasi binary yang dikirim browser, termasuk Content-Type
-// dengan parameter tambahan. Body selalu diteruskan sebagai Buffer.
 app.addContentTypeParser(/^application\/(octet-stream|pdf)(?:;.*)?$/i,{parseAs:'buffer'},(req,body,done)=>done(null,body));
 
 await app.register(cors,{origin:true});
@@ -39,7 +37,7 @@ app.get('/api/upload/:id/status',async(req,reply)=>{const rows=await q('SELECT t
 app.post('/api/upload/complete',async(req,reply)=>{const {uploadId,title}=req.body||{};const rows=await q('SELECT * FROM uploads WHERE id=$1',[uploadId]);const upload=rows[0];if(!upload)return reply.code(404).send({error:'Upload tidak ditemukan'});const parts=await q('SELECT part_number,part_size FROM upload_parts WHERE upload_id=$1 ORDER BY part_number',[uploadId]);const total=parts.reduce((s,x)=>s+Number(x.part_size),0);if(total!==Number(upload.total_size))return reply.code(409).send({error:'Upload belum lengkap',uploaded:total,total:Number(upload.total_size)});const bookId=crypto.randomUUID();const filename=`${bookId}-${safeName(upload.original_filename)}`;const finalPath=p('books',filename);const handle=await fs.open(finalPath,'w');try{for(const part of parts){const data=await fs.readFile(path.join(upload.temp_path,`part-${String(part.part_number).padStart(8,'0')}`));await handle.write(data)}}finally{await handle.close()}
 await q('INSERT INTO books(id,title,original_filename,storage_path,file_size,mime_type,status) VALUES($1,$2,$3,$4,$5,$6,$7)',[bookId,(title||upload.original_filename.replace(/\.pdf$/i,'')),upload.original_filename,finalPath,upload.total_size,'application/pdf','ready']);await q('UPDATE uploads SET status=$2,completed_at=NOW() WHERE id=$1',[uploadId,'completed']);await fs.rm(upload.temp_path,{recursive:true,force:true});return {ok:true,id:bookId,viewer:`/viewer.html?id=${bookId}`}});
 
-app.post('/api/upload/:id/abort',async(req,reply)=>{const rows=await q('SELECT temp_path FROM uploads WHERE id=$1],[req.params.id]);if(rows[0])await fs.rm(rows[0].temp_path,{recursive:true,force:true});await q('UPDATE uploads SET status=$2 WHERE id=$1',[req.params.id,'aborted']);return {ok:true}});
+app.post('/api/upload/:id/abort',async(req,reply)=>{const rows=await q('SELECT temp_path FROM uploads WHERE id=$1',[req.params.id]);if(rows[0])await fs.rm(rows[0].temp_path,{recursive:true,force:true});await q('UPDATE uploads SET status=$2 WHERE id=$1',[req.params.id,'aborted']);return {ok:true}});
 app.get('/api/media/:id',async(req,reply)=>{const rows=await q('SELECT storage_path,mime_type FROM books WHERE id=$1 AND status=$2',[req.params.id,'ready']);if(!rows[0])return reply.code(404).send({error:'Not found'});reply.header('content-type',rows[0].mime_type).header('accept-ranges','bytes');return reply.send(createReadStream(rows[0].storage_path))});
 
 app.setErrorHandler((err,req,reply)=>{req.log.error(err);reply.code(err.statusCode||500).send({error:err.message||'Server error'})});
