@@ -76,6 +76,14 @@ await app.register(async function apiRoutes(api) {
     if (!rows[0]) return reply.code(404).send({ error: 'Not found' });
     return rows[0];
   });
+  api.delete('/api/books/:id', async (req, reply) => {
+    const rows = await q('SELECT storage_path FROM books WHERE id=$1', [req.params.id]);
+    if (!rows[0]) return reply.code(404).send({ error: 'Flipbook tidak ditemukan' });
+    const storagePath = rows[0].storage_path;
+    await q('DELETE FROM books WHERE id=$1', [req.params.id]);
+    await fs.rm(storagePath, { force: true }).catch(() => {});
+    return { ok: true };
+  });
 
   api.post('/api/books/:id/share', async (req, reply) => {
     const rows = await q('SELECT id FROM books WHERE id=$1 AND status=$2', [req.params.id, 'ready']);
