@@ -1,45 +1,51 @@
-# Revo Flip V1.2 NAS Edition
+# Revo Flip V1.3 NAS Edition
 
-Backend V1.2 menyimpan PDF langsung pada shared folder Synology dan metadata pada PostgreSQL.
+Revo Flip berjalan di Synology Container Manager. PDF disimpan pada NAS dan metadata disimpan pada PostgreSQL.
 
-## Storage
+## Folder yang harus dipertahankan
 
-Di Synology buat shared folder `RevoFlip` sehingga path host menjadi:
-
-```text
-/volume1/RevoFlip
-```
-
-Aplikasi otomatis membuat:
+Untuk instalasi ini gunakan folder project:
 
 ```text
-/volume1/RevoFlip/temp
-/volume1/RevoFlip/books
-/volume1/RevoFlip/covers
-/volume1/RevoFlip/thumbnails
+/volume1/docker/RevoFlip
 ```
 
-## Deploy di Synology DS923+
+Data berikut tidak ikut diganti saat auto update:
 
-1. Install Container Manager.
-2. Clone atau download repository ke folder NAS, misalnya `/volume1/docker/revo-flip/app`.
-3. Salin `.env.example` menjadi `.env` dan ganti `POSTGRES_PASSWORD` dengan password kuat.
-4. Pastikan shared folder `RevoFlip` tersedia.
-5. Dari Container Manager atau terminal jalankan:
-
-```bash
-docker compose up -d --build
+```text
+storage/     # file PDF dan data aplikasi
+postgres/    # database PostgreSQL
+backups/     # backup source sebelum update
+.env         # jika digunakan
 ```
 
-6. Buka `http://IP-NAS:3000`.
-7. Endpoint health: `/api/health`.
+## Auto Update NAS
+
+Repository menyediakan `nas-update.sh`. Script akan:
+
+1. Mengecek commit terbaru pada branch `main`.
+2. Berhenti jika NAS sudah memakai versi terbaru.
+3. Membuat backup source saat ini.
+4. Mengganti source aplikasi dengan versi terbaru dari GitHub.
+5. Mempertahankan konfigurasi `docker-compose.yml` lokal dan folder data.
+6. Rebuild container `app`.
+7. Restart hanya container aplikasi.
+
+Jalankan dari Task Scheduler atau SSH:
+
+```sh
+cd /volume1/docker/RevoFlip
+sh nas-update.sh
+```
+
+Untuk otomatis setiap hari, buat Scheduled Task di DSM yang menjalankan perintah di atas. Jalankan sebagai user yang memiliki akses ke Docker.
+
+> Update tidak menghapus `storage/` atau `postgres/`. Backup source dibuat di `backups/`.
 
 ## Upload besar
 
-Frontend memecah PDF menjadi chunk 50 MiB. Setiap chunk disimpan sementara pada `/volume1/RevoFlip/temp/<upload-id>`. Endpoint status dapat membaca part yang sudah diterima sehingga frontend dapat melanjutkan mekanisme resume.
+Frontend memecah PDF menjadi beberapa chunk agar upload besar dapat dilanjutkan. Ukuran maksimum aplikasi saat ini dikonfigurasi hingga 10 GB.
 
-Saat selesai, server memverifikasi total ukuran, menggabungkan part secara berurutan, lalu menyimpan PDF final di `/volume1/RevoFlip/books`. Metadata buku masuk ke PostgreSQL.
+## Akses internet
 
-## Catatan keamanan
-
-Jangan membuka port 3000 langsung ke internet. Untuk produksi gunakan Synology Reverse Proxy + HTTPS, dan tambahkan autentikasi admin pada tahap berikutnya.
+Jangan membuka port 3000 langsung ke internet. Untuk produksi gunakan Synology Reverse Proxy + HTTPS.
