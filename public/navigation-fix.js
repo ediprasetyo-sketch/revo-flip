@@ -1,17 +1,28 @@
 (() => {
-  const intercept = (selector, action) => {
+  function bind(selector, direction) {
     const button = document.querySelector(selector);
     if (!button) return;
+
     button.addEventListener('click', event => {
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
-      const $book = window.jQuery && window.jQuery('#flipbook');
-      if (!$book || !$book.data('turn')) return;
       if (button.disabled) return;
-      try { $book.turn(action); } catch (error) { console.error('Flip navigation failed', error); }
+
+      const $book = window.jQuery ? window.jQuery('#flipbook') : null;
+      if (!$book || !$book.data('turn')) return;
+
+      try {
+        const current = Number($book.turn('page')) || 1;
+        const total = Number($book.turn('pages')) || current;
+        const target = Math.max(1, Math.min(total, current + direction));
+        if (target !== current) $book.turn('page', target);
+      } catch (error) {
+        console.error('Flip navigation failed', error);
+      }
     }, true);
-  };
-  intercept('#prev', 'previous');
-  intercept('#next', 'next');
+  }
+
+  bind('#prev', -1);
+  bind('#next', 1);
 })();
