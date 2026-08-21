@@ -1,3 +1,4 @@
+const RELEASE = '20260821-upload10gb-v2';
 const MAX_FILE_SIZE = 10 * 1024 ** 3;
 const CHUNK_SIZE = 10 * 1024 ** 2;
 const RETRIES = 3;
@@ -19,6 +20,14 @@ function formatSize(n){const u=['B','KB','MB','GB','TB'];let i=0;while(n>=1024&&
 function errorFromResponse(r,fallback){return r.json().then(x=>x.error||x.message||fallback).catch(()=>fallback)}
 async function blobToBase64(blob){const buffer=await blob.arrayBuffer();const bytes=new Uint8Array(buffer);let binary='';const step=0x8000;for(let i=0;i<bytes.length;i+=step)binary+=String.fromCharCode(...bytes.subarray(i,i+step));return btoa(binary)}
 async function retry(fn){let last;for(let i=0;i<RETRIES;i++){try{return await fn()}catch(err){last=err;if(i<RETRIES-1)await new Promise(r=>setTimeout(r,700*(i+1)))}}throw last}
+
+async function checkServer(){
+  try{
+    const r=await fetch(`/api/version?release=${RELEASE}`,{cache:'no-store'});
+    if(!r.ok)return null;
+    return await r.json();
+  }catch{return null}
+}
 
 function selectFile(f){
   if(!f||uploading)return;
@@ -48,15 +57,20 @@ async function uploadSelectedFile(){
   const storageKey=key(file);
   const started=performance.now();
   try{
+    const server=await checkServer();
+    if(server?.version) console.info('Revo Learning Flip server',server.version,'client',RELEASE);
     let session=JSON.parse(localStorage.getItem(storageKey)||'null');
     if(!session){
-      const r=await fetch('/api/upload/init',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name:file.name,size:file.size,type:'application/pdf',chunkSize:CHUNK_SIZE})});
+      const r=await fetch('/api/upload/init',{method:'POST',headers:{'content-type':'application/json','x-revo-release':RELEASE},cache:'no-store',body:JSON.stringify({name:file.name,size:file.size,type:'application/pdf',chunkSize:CHUNK_SIZE})});
       if(!r.ok)throw new Error(await errorFromResponse(r,'Gagal membuat sesi upload'));
       session=await r.json();
+      if(Number.isFinite(Number(session.maxFileSize))&&Number(session.maxFileSize)<file.size){
+        throw new Error(`Server aktif masih membatasi upload hingga ${formatSize(Number(session.maxFileSize))}. Redeploy server versi terbaru diperlukan`);
+      }
       localStorage.setItem(storageKey,JSON.stringify(session));
     }
     const chunkSize=Number(session.chunkSize)||CHUNK_SIZE;
-    const st=await fetch(`/api/upload/${encodeURIComponent(session.uploadId)}/status`);
+    const st=await fetch(`/api/upload/${encodeURIComponent(session.uploadId)}/status?release=${RELEASE}`,{cache:'no-store'});
     if(!st.ok){localStorage.removeItem(storageKey);throw new Error(await errorFromResponse(st,'Sesi upload tidak tersedia'))}
     const state=await st.json();
     const done=new Set((state.parts||[]).map(Number));
@@ -70,7 +84,7 @@ async function uploadSelectedFile(){
       const chunk=file.slice(offset,Math.min(offset+chunkSize,file.size),'application/octet-stream');
       await retry(async()=>{
         const data=await blobToBase64(chunk);
-        const r=await fetch(`/api/upload/part?uploadId=${encodeURIComponent(session.uploadId)}&part=${part}`,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({data})});
+        const r=await fetch(`/api/upload/part?uploadId=${encodeURIComponent(session.uploadId)}&part=${part}&release=${RELEASE}`,{method:'PUT',headers:{'content-type':'application/json','x-revo-release':RELEASE},cache:'no-store',body:JSON.stringify({data})});
         if(!r.ok)throw new Error(await errorFromResponse(r,`Part ${part} gagal (${r.status})`));
       });
       uploaded+=chunk.size;
@@ -80,7 +94,7 @@ async function uploadSelectedFile(){
       const secs=(performance.now()-started)/1000;
       speed.textContent=`${formatSize(uploaded/Math.max(secs,.1))}/s`;
     }
-    const complete=await fetch('/api/upload/complete',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({uploadId:session.uploadId,title:file.name.replace(/\.pdf$/i,'')})});
+    const complete=await fetch('/api/upload/complete',{method:'POST',headers:{'content-type':'application/json','x-revo-release':RELEASE},cache:'no-store',body:JSON.stringify({uploadId:session.uploadId,title:file.name.replace(/\.pdf$/i,'')})});
     if(!complete.ok)throw new Error(await errorFromResponse(complete,'Gagal menyelesaikan upload'));
     const result=await complete.json();
     localStorage.removeItem(storageKey);
